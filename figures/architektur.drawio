@@ -1,0 +1,110 @@
+<mxfile host="drawio">
+  <diagram name="Architektur" id="arch">
+    <mxGraphModel adaptiveColors="auto" dx="1400" dy="860" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1420" pageHeight="730" background="#FFFFFF" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Batch-Datenarchitektur: Trainingsdaten zur Taxinachfrage&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:13px;color:#64748B&quot;&gt;Quartalsweiser Lauf · NYC TLC Yellow Taxi · Rahil Chughtai · DLMDWWDE02&lt;/span&gt;" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=20;fontColor=#0F172A;" vertex="1" parent="1">
+          <mxGeometry x="40" y="16" width="1000" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="src" value="&lt;b&gt;NYC TLC&lt;/b&gt;&lt;br&gt;Yellow Taxi Trip Records&lt;br&gt;&lt;span style=&quot;font-size:11px;color:#64748B&quot;&gt;monatliche Parquet-Dateien, HTTPS&lt;/span&gt;" style="shape=document;size=0.15;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#F1F5F9;strokeColor=#64748B;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="280" width="170" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="docker" value="Docker Compose" style="swimlane;startSize=34;rounded=1;arcSize=3;html=1;fillColor=#E0F2FE;swimlaneFillColor=#F8FAFC;strokeColor=#0EA5E9;strokeWidth=2;fontColor=#0C4A6E;fontStyle=1;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="250" y="90" width="900" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="orch" value="&lt;b&gt;Orchestrierung&lt;/b&gt; · Python-Skript&lt;br&gt;&lt;span style=&quot;font-size:11px;color:#64748B&quot;&gt;startet Services nacheinander&lt;/span&gt;" style="rounded=1;arcSize=14;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8B5CF6;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=13;" vertex="1" parent="docker">
+          <mxGeometry x="20" y="50" width="860" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="ing" value="&lt;b&gt;Ingestion-Service&lt;/b&gt;&lt;br&gt;Python&lt;br&gt;&lt;span style=&quot;font-size:11px;color:#64748B&quot;&gt;Download der Monatsdaten&lt;/span&gt;" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B82F6;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=13;" vertex="1" parent="docker">
+          <mxGeometry x="20" y="190" width="170" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="lake" value="Data Lake · SeaweedFS (S3)" style="swimlane;startSize=30;rounded=1;arcSize=6;html=1;fillColor=#FEF3C7;swimlaneFillColor=#FFFBEB;strokeColor=#F59E0B;strokeWidth=2;fontColor=#78350F;fontStyle=1;fontSize=13;" vertex="1" parent="docker">
+          <mxGeometry x="240" y="140" width="640" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="bronze" value="&lt;b&gt;Bronze&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:11px&quot;&gt;Rohdaten, unverändert&lt;/span&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=12;fillColor=#F5E1CC;strokeColor=#B45309;strokeWidth=2;fontColor=#1F2937;fontSize=13;" vertex="1" parent="lake">
+          <mxGeometry x="30" y="50" width="150" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="silver" value="&lt;b&gt;Silver&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:11px&quot;&gt;bereinigt und validiert&lt;/span&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=12;fillColor=#E5E7EB;strokeColor=#6B7280;strokeWidth=2;fontColor=#1F2937;fontSize=13;" vertex="1" parent="lake">
+          <mxGeometry x="245" y="50" width="150" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="gold" value="&lt;b&gt;Gold&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;font-size:11px&quot;&gt;aggregierte Features, Parquet&lt;/span&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=12;fillColor=#FDE68A;strokeColor=#D97706;strokeWidth=2;fontColor=#1F2937;fontSize=13;" vertex="1" parent="lake">
+          <mxGeometry x="460" y="50" width="150" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="spark" value="Spark Cluster" style="swimlane;startSize=30;rounded=1;arcSize=6;html=1;fillColor=#FFEDD5;swimlaneFillColor=#FFF7ED;strokeColor=#F97316;strokeWidth=2;fontColor=#7C2D12;fontStyle=1;fontSize=13;horizontal=0;" vertex="1" parent="docker">
+          <mxGeometry x="240" y="360" width="640" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="job1" value="&lt;b&gt;Spark-Job 1&lt;/b&gt;&lt;br&gt;Bereinigung und Validierung" style="rounded=1;arcSize=14;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#F97316;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=12;" vertex="1" parent="spark">
+          <mxGeometry x="100" y="44" width="200" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="job2" value="&lt;b&gt;Spark-Job 2&lt;/b&gt;&lt;br&gt;Aggregation und Feature-Bildung" style="rounded=1;arcSize=14;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#F97316;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=12;" vertex="1" parent="spark">
+          <mxGeometry x="345" y="44" width="200" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="master" value="Spark Master" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FED7AA;strokeColor=#EA580C;fontColor=#7C2D12;fontSize=11;fontStyle=1;" vertex="1" parent="spark">
+          <mxGeometry x="50" y="122" width="120" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="w1" value="Worker 1" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EA580C;fontColor=#7C2D12;fontSize=11;" vertex="1" parent="spark">
+          <mxGeometry x="190" y="122" width="100" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="w2" value="Worker 2" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EA580C;fontColor=#7C2D12;fontSize=11;" vertex="1" parent="spark">
+          <mxGeometry x="310" y="122" width="100" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="wn" value="Worker n" style="rounded=1;arcSize=20;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#EA580C;dashed=1;fontColor=#7C2D12;fontSize=11;" vertex="1" parent="spark">
+          <mxGeometry x="430" y="122" width="120" height="38" as="geometry"/>
+        </mxCell>
+        <mxCell id="ml" value="&lt;b&gt;ML-Anwendung&lt;/b&gt;&lt;br&gt;Modell zur Taxinachfrage&lt;br&gt;&lt;span style=&quot;font-size:11px;color:#64748B&quot;&gt;liest Gold-Parquet 1× pro Quartal&lt;/span&gt;" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#10B981;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1200" y="280" width="170" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_src" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="src" target="ing">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ing" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="docker" source="ing" target="bronze">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_b_j1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;exitX=0.75;exitY=1;entryX=0.21;entryY=0;" edge="1" parent="docker" source="bronze" target="job1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_j1_s" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;exitX=0.91;exitY=0;entryX=0.25;entryY=1;" edge="1" parent="docker" source="job1" target="silver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_s_j2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;exitX=0.75;exitY=1;entryX=0.06;entryY=0;" edge="1" parent="docker" source="silver" target="job2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_j2_g" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;exitX=0.76;exitY=0;entryX=0.25;entryY=1;" edge="1" parent="docker" source="job2" target="gold">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ml" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;fontSize=11;fontColor=#475569;labelBackgroundColor=#FFFFFF;" edge="1" parent="1" source="gold" target="ml">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="c_ing" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#8B5CF6;strokeWidth=1.5;dashed=1;endArrow=open;endFill=0;exitX=0.099;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="docker" source="orch" target="ing">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="c_spark" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#8B5CF6;strokeWidth=1.5;dashed=1;endArrow=open;endFill=0;exitX=0.227;exitY=1;entryX=0;entryY=0.5;" edge="1" parent="docker" source="orch" target="spark">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="215" y="450"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg1" value="" style="html=1;strokeColor=#475569;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="40" y="692" as="sourcePoint"/>
+            <mxPoint x="100" y="692" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg1t" value="Datenfluss" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="108" y="680" width="90" height="24" as="geometry"/>
+        </mxCell>
+        <mxCell id="lg2" value="" style="html=1;strokeColor=#8B5CF6;strokeWidth=1.5;dashed=1;endArrow=open;endFill=0;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="210" y="692" as="sourcePoint"/>
+            <mxPoint x="270" y="692" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lg2t" value="Steuerung durch Orchestrierung" style="text;html=1;align=left;verticalAlign=middle;fontSize=11;fontColor=#475569;" vertex="1" parent="1">
+          <mxGeometry x="278" y="680" width="200" height="24" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
