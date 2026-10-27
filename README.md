@@ -63,7 +63,7 @@ uv sync                                   # Dev-Tools (Ruff, pre-commit)
 uv run pre-commit install                 # Hooks für jeden Commit
 uv run ruff format . && uv run ruff check .
 uv sync --directory services/ingestion    # Umgebung eines Service, z. B. für die IDE
+uv run --directory services/ingestion pytest   # Unit-Tests eines Service
 ```
 
-Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` unter `services/<name>/`.
-
+Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) führt die Unit-Tests bei jedem Pull Request aus, mit einem Matrix-Job pro Service. Der abschließende Job `tests-passed` ist nur grün, wenn alle Matrix-Jobs erfolgreich waren; er ist der Pflicht-Check für Merges nach `develop`.
