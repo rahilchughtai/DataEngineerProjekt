@@ -30,7 +30,7 @@ Die editierbare Quelle des Diagramms liegt in [figures/architektur.drawio](figur
 
 - [Podman](https://podman.io/) mit Compose-Provider (`podman compose`) oder alternativ Docker mit `docker compose`. Die Compose-Datei hält sich an die Compose-Spezifikation und läuft mit beiden.
 - [uv](https://docs.astral.sh/uv/) für die lokale Entwicklung (Python 3.12).
-- Für den späteren Spark-Cluster braucht die Podman-Machine mehr als die standardmäßigen 2 GiB RAM (`podman machine set --memory 8192`).
+- Mindestens 8 GB RAM für Container: Master, zwei Worker mit je 2 GiB und der Driver des Spark-Jobs. Bei einer Podman-Machine mit Hyper-V oder unter macOS mit `podman machine set --memory 8192` erhöhen. Unter WSL teilt sich die Machine den Speicher mit Windows.
 
 ## Start
 
@@ -39,19 +39,23 @@ cp .env.example .env        # danach alle change-me-Werte durch eigene Schlüsse
 podman compose up --build   # bzw. docker compose up --build
 ```
 
-Compose startet SeaweedFS, legt über `lake-init` die Buckets `bronze`, `silver` und `gold` an und führt danach einmal den Ingestion-Service für das in `INGEST_QUARTER` (oder `INGEST_MONTH`) angegebene Quartal bzw. den Monat aus. Einzelne Läufe lassen sich auch gezielt starten:
+Compose startet SeaweedFS und den Spark-Cluster (Master und zwei Worker) und legt über `lake-init` die Buckets `bronze`, `silver` und `gold` an. Danach führt es nacheinander und je einmal den Ingestion-Service und Spark-Job 1 (`silver-job`) für das in `INGEST_QUARTER` (oder `INGEST_MONTH`) angegebene Quartal bzw. den Monat aus. Die Reihenfolge sichert `depends_on` mit `service_completed_successfully` ab. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar. Einzelne Läufe lassen sich auch gezielt starten:
 
 ```sh
 podman compose run --rm ingestion --quarter 2024Q1
 podman compose run --rm ingestion --month 2024-01 --force
+podman compose run --rm silver-job --month 2024-01
+podman compose up -d --scale spark-worker=3 spark-worker   # weitere Worker
 ```
+
+Details zu Cluster, Qualitätsregeln und Reports: [services/spark/README.md](services/spark/README.md).
 
 ## Data Lake
 
 | Bucket | Inhalt | Schreibt | Liest |
 |---|---|---|---|
 | `bronze` | TLC-Dateien unverändert, `yellow_tripdata/year=YYYY/month=MM/…parquet`, Laufprotokolle unter `_runs/` | ingestion | ingestion, spark |
-| `silver` | bereinigte und validierte Fahrten | spark | spark |
+| `silver` | bereinigte und validierte Fahrten `yellow_tripdata/year=YYYY/month=MM/`, abgelehnte Zeilen mit Grund unter `_quarantine/`, Qualitätsreports unter `_runs/` | spark | spark |
 | `gold` | aggregierte Features | spark | spark, ml_reader |
 
 Jeder Service bekommt in Compose nur die Zugangsdaten seiner eigenen Identität. Die Identitäten werden beim Start von SeaweedFS aus `.env` erzeugt ([seaweedfs/s3.json.template](seaweedfs/s3.json.template)). SeaweedFS 4.x verwirft die Identitäten ohne Signing-Key stillschweigend und läuft dann ohne Authentifizierung. Der Container startet deshalb nicht, wenn `SEAWEEDFS_SIGNING_KEY` fehlt oder kürzer als 32 Zeichen ist.
@@ -65,5 +69,7 @@ uv run ruff format . && uv run ruff check .
 uv sync --directory services/ingestion    # Umgebung eines Service, z. B. für die IDE
 uv run --directory services/ingestion pytest   # Unit-Tests eines Service
 ```
+
+Die Spark-Tests brauchen Java 17; unter Windows laufen sie im Spark-Image (Befehl in [services/spark/README.md](services/spark/README.md#tests)).
 
 Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) führt die Unit-Tests bei jedem Pull Request aus, mit einem Matrix-Job pro Service. Der abschließende Job `tests-passed` ist nur grün, wenn alle Matrix-Jobs erfolgreich waren; er ist der Pflicht-Check für Merges nach `develop`.

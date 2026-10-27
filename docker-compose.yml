@@ -74,9 +74,90 @@ services:
     restart: on-failure:2
     logging: *default-logging
 
+  spark-master:
+    build:
+      context: ./services/spark
+    image: localhost/taxi-pipeline/spark:0.1.0
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    ports:
+      - "127.0.0.1:8080:8080"
+    # Nur im Rechennetz: der Master braucht keinen Zugriff auf den Data Lake.
+    networks: [sparknet]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging: *default-logging
+
+  spark-worker:
+    image: localhost/taxi-pipeline/spark:0.1.0
+    command: ["/usr/local/bin/start-worker.sh"]
+    # Keine S3-Zugangsdaten: die Executors erhalten sie über die Konfiguration des Jobs.
+    environment:
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
+    # Horizontal skalierbar: docker compose up --scale spark-worker=N
+    deploy:
+      replicas: 2
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    networks: [sparknet, lakenet]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging: *default-logging
+
+  # Spark-Job 1 als One-Shot-Container (Driver im Client-Modus). Weitere Argumente wie
+  # --month 2024-01 lassen sich mit docker compose run --rm silver-job … anhängen.
+  silver-job:
+    image: localhost/taxi-pipeline/spark:0.1.0
+    entrypoint:
+      - /usr/local/bin/submit-job.sh
+      - --conf=spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-1g}
+      - /opt/spark-jobs/spark_jobs/bronze_to_silver.py
+    command: []
+    environment:
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+      BRONZE_BUCKET: bronze
+      SILVER_BUCKET: silver
+      TLC_DATASET: ${TLC_DATASET:-yellow_tripdata}
+      INGEST_QUARTER: ${INGEST_QUARTER:-}
+      INGEST_MONTH: ${INGEST_MONTH:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      ingestion:
+        condition: service_completed_successfully
+      spark-worker:
+        condition: service_healthy
+    networks: [sparknet, lakenet]
+    # Kein on-failure: Compose würde auch Exit 2 (Konfiguration) und 3 (keine Daten) wiederholen.
+    restart: "no"
+    logging: *default-logging
+
 networks:
   lakenet:
     name: taxi-pipeline-lakenet
+  sparknet:
+    name: taxi-pipeline-sparknet
 
 volumes:
   seaweedfs-data:
