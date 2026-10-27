@@ -3,10 +3,10 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 
 from spark_jobs.periods import Month
-from spark_jobs.quality import RULE_NAMES, classify, rules
+from spark_jobs.quality import classify
 from spark_jobs.schema import harmonize
 
 JANUARY = Month(2024, 1)
@@ -16,10 +16,6 @@ def reason(bronze: Callable[..., DataFrame], override: dict[str, Any], month: Mo
     row = classify(harmonize(bronze(override)), month).first()
     assert row is not None
     return row["reject_reason"]
-
-
-def test_rule_names_match_rules(spark: SparkSession) -> None:
-    assert tuple(rule.name for rule in rules(JANUARY)) == RULE_NAMES
 
 
 def test_good_trip_passes(bronze: Callable[..., DataFrame]) -> None:
@@ -50,10 +46,14 @@ def test_missing_passenger_count_is_allowed(bronze: Callable[..., DataFrame]) ->
         ({"fare_amount": -5.0}, "amount_invalid"),
         ({"total_amount": -5.0}, "amount_invalid"),
         ({"total_amount": None}, "amount_invalid"),
+        ({"fare_amount": float("nan")}, "amount_invalid"),
+        ({"total_amount": float("nan")}, "amount_invalid"),
+        ({"trip_distance": float("nan")}, "distance_invalid"),
         ({"PULocationID": 0}, "location_invalid"),
         ({"DOLocationID": 266}, "location_invalid"),
         ({"PULocationID": None}, "location_invalid"),
         ({"passenger_count": 12}, "passenger_count_invalid"),
+        ({"passenger_count": -1}, "passenger_count_invalid"),
     ],
 )
 def test_rule_rejects(

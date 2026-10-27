@@ -60,7 +60,7 @@ def test_process_month_counts_and_writes(
     assert entry["rows_in"] == entry["rows_valid"] + entry["duplicates"] + entry["rows_rejected"]
 
     rows = silver(spark, paths).collect()
-    assert {(r["year"], r["month"]) for r in rows} == {(2024, 1)}
+    assert {(r["year"], r["month"]) for r in rows} == {("2024", "01")}
     assert {r["_run_id"] for r in rows} == {RUN_ID}
     assert all("/bronze/yellow_tripdata/year=2024/month=01/" in r["_source_file"] for r in rows)
 
@@ -99,7 +99,18 @@ def test_rerun_leaves_other_months_untouched(
     counts = {
         (r["month"]): r["count"] for r in silver(spark, paths).groupBy("month").count().collect()
     }
-    assert counts == {1: 2, 2: 1}
+    assert counts == {"01": 2, "02": 1}
+
+
+def test_same_business_values_different_vendor_are_kept(
+    spark: SparkSession, bronze: Callable[..., DataFrame], put_bronze: Any, paths: LakePaths
+) -> None:
+    put_bronze(JANUARY, bronze({"VendorID": 1}, {"VendorID": 2}))
+
+    entry = process_month(spark, JANUARY, paths, RUN_ID)
+
+    assert entry["rows_valid"] == 2
+    assert entry["duplicates"] == 0
 
 
 def test_rerun_clears_stale_quarantine(
@@ -143,7 +154,6 @@ def test_schema_error_marks_month_failed(
 
     assert report["counts"] == {"failed": 1}
     assert "PULocationID" in report["months"][0]["error"]
-    assert report["months"][0]["written"] == []
 
 
 def test_unconvertible_value_is_quarantined_not_fatal(
@@ -157,7 +167,7 @@ def test_unconvertible_value_is_quarantined_not_fatal(
     assert entry["rejected_by_rule"]["location_invalid"] == 1
 
 
-def test_failure_between_writes_reports_what_was_written(
+def test_failure_between_writes_discards_month(
     spark: SparkSession,
     bronze: Callable[..., DataFrame],
     put_bronze: Any,
@@ -165,6 +175,7 @@ def test_failure_between_writes_reports_what_was_written(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     put_bronze(JANUARY, january_sample(bronze))
+    process_month(spark, JANUARY, paths, RUN_ID)
     original = bronze_to_silver.write_partition
 
     def fail_on_quarantine(spark: SparkSession, df: DataFrame, table: str, *args: Any) -> None:
@@ -174,18 +185,19 @@ def test_failure_between_writes_reports_what_was_written(
 
     monkeypatch.setattr(bronze_to_silver, "write_partition", fail_on_quarantine)
 
-    entry = process_month(spark, JANUARY, paths, RUN_ID)
+    entry = process_month(spark, JANUARY, paths, "20240402T000000Z")
 
     assert entry["status"] == "failed"
-    assert entry["written"] == ["silver"]
     assert "Schreibfehler" in entry["error"]
+    for table in (paths.silver_table(), paths.quarantine_table()):
+        assert not (Path(table.removeprefix("file://")) / "year=2024" / "month=01").exists()
 
 
 @pytest.mark.parametrize(
     ("counts", "expected"),
     [
         ({"processed": 3}, 0),
-        ({"processed": 2, "missing": 1}, 0),
+        ({"processed": 2, "missing": 1}, 3),
         ({"missing": 3}, 3),
         ({}, 3),
         ({"processed": 2, "failed": 1}, 1),

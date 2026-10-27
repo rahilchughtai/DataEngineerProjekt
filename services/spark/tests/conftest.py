@@ -36,6 +36,7 @@ def spark() -> Iterator[SparkSession]:
         .appName("spark-jobs-tests")
         .config("spark.sql.shuffle.partitions", "2")
         .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.sql.sources.partitionColumnTypeInference.enabled", "false")
         .config("spark.ui.enabled", "false")
         .getOrCreate()
     )

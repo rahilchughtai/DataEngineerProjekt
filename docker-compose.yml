@@ -123,13 +123,13 @@ services:
       start_period: 10s
     logging: *default-logging
 
-  # Spark-Job 1 als One-Shot-Container (Driver im Client-Modus). Weitere Argumente wie
-  # --month 2024-01 lassen sich mit docker compose run --rm silver-job … anhängen.
+  # Spark-Job 1 als One-Shot-Container (Driver im Client-Modus). Für einen anderen Zeitraum
+  # docker compose run --rm --no-deps silver-job --month 2024-01, sonst lädt die Abhängigkeit
+  # ingestion zuerst den Zeitraum aus .env.
   silver-job:
     image: localhost/taxi-pipeline/spark:0.1.0
     entrypoint:
       - /usr/local/bin/submit-job.sh
-      - --conf=spark.executor.memory=${SPARK_EXECUTOR_MEMORY:-1g}
       - /opt/spark-jobs/spark_jobs/bronze_to_silver.py
     command: []
     environment:
@@ -139,6 +139,9 @@ services:
       S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
       BRONZE_BUCKET: bronze
       SILVER_BUCKET: silver
+      # submit-job.sh prüft, dass der Executor in einen Worker passt.
+      SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
       TLC_DATASET: ${TLC_DATASET:-yellow_tripdata}
       INGEST_QUARTER: ${INGEST_QUARTER:-}
       INGEST_MONTH: ${INGEST_MONTH:-}

@@ -13,17 +13,17 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 
 1. Lesen von `s3a://bronze/yellow_tripdata/year=YYYY/month=MM/` und Harmonisierung auf ein festes Schema ([schema.py](src/spark_jobs/schema.py)). Die TLC-Dateien wechseln über die Jahre Typen und Schreibweisen von Spalten. Fehlt eine Pflichtspalte, gilt der Monat als `failed`.
 2. **Datenminimierung:** Übernommen werden nur Pickup- und Dropoff-Zeit, Pickup- und Dropoff-Zone, Passagierzahl, Distanz, Fahrpreis, Gesamtbetrag und Zahlungsart. `VendorID`, `RatecodeID`, `store_and_fwd_flag` und die Einzelgebühren entfallen.
-3. **Qualitätsprüfungen** ([quality.py](src/spark_jobs/quality.py)), siehe Tabelle unten. Die erste verletzte Regel wird als `reject_reason` gespeichert.
-4. **Deduplizierung** gültiger Zeilen über alle fachlichen Spalten.
+3. **Deduplizierung** exakt gleicher Bronze-Zeilen über alle Quellspalten, vor der Datenminimierung. Fahrten, die sich nur in verworfenen Spalten wie `VendorID` unterscheiden, bleiben als eigene Fahrten erhalten.
+4. **Qualitätsprüfungen** ([quality.py](src/spark_jobs/quality.py)), siehe Tabelle unten. Die erste verletzte Regel wird als `reject_reason` gespeichert.
 5. **Lineage-Spalten:** `_source_file` (Bronze-Datei), `_run_id`, `_processed_at`.
-6. **Schreiben**, partitioniert nach `year=YYYY/month=MM` wie in Bronze:
+6. **Schreiben**, partitioniert nach `year=YYYY/month=MM` wie in Bronze. `year` und `month` sind Strings; `spark.sql.sources.partitionColumnTypeInference.enabled=false` ([conf/spark-defaults.conf](conf/spark-defaults.conf)) verhindert, dass Spark sie beim Lesen zu Zahlen macht:
    - gültige Zeilen nach `s3a://silver/yellow_tripdata/`
    - abgelehnte Zeilen mit Grund nach `s3a://silver/_quarantine/yellow_tripdata/`
    - Report pro Lauf nach `s3a://silver/_runs/yellow_tripdata/<run_id>.json`, mit `rows_in`, `rows_valid`, `rows_rejected`, `duplicates`, Ablehnungen je Regel und Laufzeit je Monat
 
 **Idempotenz:** `mode("overwrite")` mit `partitionOverwriteMode=dynamic` ersetzt nur die Partition des verarbeiteten Monats, alle anderen bleiben unverändert. Hat ein Monat beim erneuten Lauf keine abgelehnten Zeilen mehr, wird die alte Quarantäne-Partition gelöscht. Der Report rechnet sich auf: `rows_in = rows_valid + duplicates + rows_rejected`.
 
-**Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration, `3` wenn kein einziger Monat verarbeitet wurde. Einzelne fehlende Bronze-Monate (`missing`) neben verarbeiteten sind nur eine Warnung, weil die TLC mit Verzögerung veröffentlicht. Ein Lauf ganz ohne Daten gilt dagegen nicht als Erfolg, sonst würde der nächste Pipeline-Schritt auf leeren Daten weiterlaufen. Das Compose-Service hat `restart: "no"`, Wiederholungen übernimmt der Orchestrator. Schlägt ein Monat fehl, nennt der Report unter `written`, welche Ziele (`silver`, `quarantine`) schon geschrieben waren; ein erneuter Lauf überschreibt beide.
+**Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration, `3` wenn für mindestens einen Monat die Bronze-Daten fehlen (`missing`). Ein unvollständiges Quartal gilt nicht als Erfolg, sonst würden Gold und das Training still auf einem Teil der Monate weiterlaufen. Das Compose-Service hat `restart: "no"`, Wiederholungen übernimmt der Orchestrator. Schlägt das Schreiben eines Monats fehl, werden seine Silver- und Quarantäne-Partition gelöscht: Der Monat fehlt dann ganz, statt halb aktualisiert zu sein, bis ein erneuter Lauf ihn schreibt.
 
 **Umwandlungsfehler:** Spark 4 rechnet standardmäßig im ANSI-Modus, ein normaler `cast` bricht dort bei einem unpassenden Wert den ganzen Monat ab. Die Harmonisierung nutzt deshalb `try_cast`: Der Wert wird `null` und die Zeile von den Regeln unten abgelehnt.
 
@@ -39,9 +39,9 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 | `negative_duration` | Dropoff vor Pickup | technisch unmöglich |
 | `duration_over_24h` | Fahrt länger als 24 Stunden | Taxameter nicht beendet |
 | `distance_invalid` | Distanz fehlt, < 0 oder > 200 Meilen | Messfehler |
-| `amount_invalid` | Fahrpreis oder Gesamtbetrag fehlt oder < 0 | Stornos und Korrekturbuchungen, keine Fahrten |
+| `amount_invalid` | Fahrpreis oder Gesamtbetrag fehlt, ist NaN oder < 0 | Stornos und Korrekturbuchungen, keine Fahrten |
 | `location_invalid` | Pickup- oder Dropoff-Zone fehlt oder liegt außerhalb 1 bis 265 | keine gültige TLC-Zone |
-| `passenger_count_invalid` | mehr als 9 Passagiere | Eingabefehler; ein fehlender Wert bleibt erlaubt, weil er in der Quelle häufig fehlt |
+| `passenger_count_invalid` | negativ oder mehr als 9 Passagiere | Eingabefehler; ein fehlender Wert bleibt erlaubt, weil er in der Quelle häufig fehlt |
 
 Beim Lauf über 2024Q1 (9,55 Mio. Fahrten) wurden 1,4 % der Zeilen abgelehnt, fast alle wegen `amount_invalid`.
 
@@ -49,9 +49,12 @@ Beim Lauf über 2024Q1 (9,55 Mio. Fahrten) wurden 1,4 % der Zeilen abgelehnt, fa
 
 ```sh
 docker compose up silver-job                          # Zeitraum aus INGEST_QUARTER bzw. INGEST_MONTH
-docker compose run --rm silver-job --month 2024-01    # einzelner Monat, z. B. zur Wiederholung
-docker compose run --rm silver-job --quarter 2024Q1
+docker compose up -d spark-worker                     # Cluster für Einzelläufe
+docker compose run --rm --no-deps silver-job --month 2024-01    # einzelner Monat, z. B. zur Wiederholung
+docker compose run --rm --no-deps silver-job --quarter 2024Q1
 ```
+
+`--no-deps` verhindert, dass vorher `ingestion` für den Zeitraum aus `.env` läuft; die Bronze-Daten des gewünschten Zeitraums müssen schon vorliegen.
 
 ## Umgebungsvariablen
 

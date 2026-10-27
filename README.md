@@ -44,7 +44,8 @@ Compose startet SeaweedFS und den Spark-Cluster (Master und zwei Worker) und leg
 ```sh
 podman compose run --rm ingestion --quarter 2024Q1
 podman compose run --rm ingestion --month 2024-01 --force
-podman compose run --rm silver-job --month 2024-01
+podman compose up -d spark-worker                          # Cluster für Einzelläufe
+podman compose run --rm --no-deps silver-job --month 2024-01
 podman compose up -d --scale spark-worker=3 spark-worker   # weitere Worker
 ```
 

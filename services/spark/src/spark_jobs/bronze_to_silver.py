@@ -3,6 +3,7 @@
 Liest pro Monat die unveränderte TLC-Datei aus Bronze, harmonisiert das Schema, prüft die
 Datenqualität und schreibt gültige Zeilen nach Silver, abgelehnte mit Grund in die Quarantäne.
 Beide Ziele sind nach year/month partitioniert und werden pro Monat überschrieben (idempotent).
+year und month sind Strings; spark-defaults.conf schaltet die Typableitung beim Lesen ab.
 Pro Lauf entsteht ein JSON-Report mit Zählern je Regel und Laufzeiten.
 """
 
@@ -22,7 +23,7 @@ from spark_jobs import lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.periods import Month, add_period_args, resolve_months
 from spark_jobs.quality import RULE_NAMES, classify
-from spark_jobs.schema import BUSINESS_COLUMNS, harmonize
+from spark_jobs.schema import harmonize
 from spark_jobs.session import ConfigError, build_session
 
 log = logging.getLogger("bronze_to_silver")
@@ -47,10 +48,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def deduplicate(raw: DataFrame) -> DataFrame:
+    # Nur exakt gleiche Bronze-Zeilen über alle Quellspalten; Fahrten, die sich lediglich in
+    # verworfenen Spalten wie VendorID unterscheiden, bleiben erhalten.
+    return raw.dropDuplicates([c for c in raw.columns if c != "_source_file"])
+
+
 def prepare(raw: DataFrame, month: Month, run_id: str, processed_at: datetime) -> DataFrame:
-    """Harmonisiert, klassifiziert und ergänzt Lineage- und Partitionsspalten."""
+    """Dedupliziert, harmonisiert, klassifiziert und ergänzt Lineage- und Partitionsspalten."""
     return (
-        classify(harmonize(raw), month)
+        classify(harmonize(deduplicate(raw)), month)
         .withColumn("_run_id", F.lit(run_id))
         .withColumn("_processed_at", F.lit(processed_at))
         # Als zweistelliger String, damit die Pfade wie in Bronze year=YYYY/month=MM heißen.
@@ -60,12 +67,7 @@ def prepare(raw: DataFrame, month: Month, run_id: str, processed_at: datetime) -
 
 
 def valid_rows(classified: DataFrame) -> DataFrame:
-    # Duplikate nur über die fachlichen Spalten, Lineage-Spalten zählen nicht mit.
-    return (
-        classified.filter(F.col("reject_reason").isNull())
-        .drop("reject_reason")
-        .dropDuplicates(BUSINESS_COLUMNS)
-    )
+    return classified.filter(F.col("reject_reason").isNull()).drop("reject_reason")
 
 
 def rejected_rows(classified: DataFrame) -> DataFrame:
@@ -82,6 +84,7 @@ def write_partition(
         return
     (
         df.write.mode("overwrite")
+        # Idempotenz: dynamic ersetzt nur die Partitionen, die dieser Schreibvorgang enthält.
         .option("partitionOverwriteMode", "dynamic")
         .partitionBy("year", "month")
         .parquet(table)
@@ -93,21 +96,35 @@ def process_month(
 ) -> dict[str, Any]:
     source = paths.bronze_month(month)
     entry: dict[str, Any] = {"month": str(month), "source": source}
-    written: list[str] = []
     try:
-        return _process_month(spark, month, paths, run_id, entry, written)
+        return _process_month(spark, month, paths, run_id, entry)
     except Exception as err:
-        log.exception("month=%s status=failed written=%s", month, written)
-        return entry | {"status": "failed", "error": str(err), "written": written}
+        log.exception("month=%s status=failed", month)
+        return entry | {"status": "failed", "error": str(err)}
+
+
+def write_month(
+    spark: SparkSession,
+    classified: DataFrame,
+    paths: LakePaths,
+    month: Month,
+    has_valid: bool,
+    has_rejected: bool,
+) -> None:
+    """Schreibt Silver und Quarantäne des Monats; bei einem Fehler fehlt der Monat in beiden."""
+    try:
+        write_partition(spark, valid_rows(classified), paths.silver_table(), month, has_valid)
+        write_partition(
+            spark, rejected_rows(classified), paths.quarantine_table(), month, has_rejected
+        )
+    except Exception:
+        for table in (paths.silver_table(), paths.quarantine_table()):
+            lake.delete(spark, f"{table}/{lake.partition(month)}")
+        raise
 
 
 def _process_month(
-    spark: SparkSession,
-    month: Month,
-    paths: LakePaths,
-    run_id: str,
-    entry: dict[str, Any],
-    written: list[str],
+    spark: SparkSession, month: Month, paths: LakePaths, run_id: str, entry: dict[str, Any]
 ) -> dict[str, Any]:
     source = entry["source"]
     started = time.monotonic()
@@ -117,29 +134,21 @@ def _process_month(
 
     processed_at = datetime.now(timezone.utc).replace(microsecond=0)
     raw = spark.read.parquet(source).withColumn("_source_file", F.col("_metadata.file_path"))
+    rows_in = raw.count()
     classified = prepare(raw, month, run_id, processed_at).cache()
     try:
         by_reason = {
             row["reject_reason"]: row["count"]
             for row in classified.groupBy("reject_reason").count().collect()
         }
-        rows_in = sum(by_reason.values())
         rejected_by_rule = {name: by_reason.get(name, 0) for name in RULE_NAMES}
         rows_rejected = sum(rejected_by_rule.values())
-        passed = by_reason.get(None, 0)
-
-        write_partition(spark, valid_rows(classified), paths.silver_table(), month, passed > 0)
-        written.append("silver")
-        write_partition(
-            spark, rejected_rows(classified), paths.quarantine_table(), month, rows_rejected > 0
-        )
-        written.append("quarantine")
+        rows_valid = by_reason.get(None, 0)
+        write_month(spark, classified, paths, month, rows_valid > 0, rows_rejected > 0)
     finally:
         classified.unpersist()
 
-    # Nachlesen statt erneut zählen: bestätigt zugleich, dass die Partition geschrieben wurde.
-    silver_partition = f"{paths.silver_table()}/{lake.partition(month)}"
-    rows_valid = spark.read.parquet(silver_partition).count() if passed else 0
+    duplicates = rows_in - sum(by_reason.values())
     seconds = round(time.monotonic() - started, 2)
     log.info(
         "month=%s status=processed rows_in=%d valid=%d rejected=%d duplicates=%d seconds=%.1f",
@@ -147,7 +156,7 @@ def _process_month(
         rows_in,
         rows_valid,
         rows_rejected,
-        passed - rows_valid,
+        duplicates,
         seconds,
     )
     return entry | {
@@ -155,7 +164,7 @@ def _process_month(
         "rows_in": rows_in,
         "rows_valid": rows_valid,
         "rows_rejected": rows_rejected,
-        "duplicates": passed - rows_valid,
+        "duplicates": duplicates,
         "rejected_by_rule": rejected_by_rule,
         "seconds": seconds,
     }
@@ -185,12 +194,12 @@ def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str)
 
 
 def exit_code(report: dict[str, Any]) -> int:
-    """1 bei fehlgeschlagenen Monaten, 3 wenn nichts verarbeitet wurde, sonst 0."""
+    """1 bei fehlgeschlagenen Monaten, 3 wenn Bronze-Daten für einen Monat fehlen, sonst 0."""
     counts = report["counts"]
     if counts.get("failed"):
         return 1
-    if not counts.get("processed"):
-        log.error("kein Monat verarbeitet, Bronze-Daten fehlen: counts=%s", counts)
+    if counts.get("missing") or not counts.get("processed"):
+        log.error("Bronze-Daten fehlen, Zeitraum unvollständig: counts=%s", counts)
         return 3
     return 0
 
