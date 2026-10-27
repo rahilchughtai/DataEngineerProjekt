@@ -1,0 +1,83 @@
+name: taxi-pipeline
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  seaweedfs:
+    build:
+      context: ./seaweedfs
+    image: localhost/taxi-pipeline/seaweedfs:0.1.0
+    environment:
+      WEED_JWT_FILER_SIGNING_KEY: ${SEAWEEDFS_SIGNING_KEY:?siehe .env.example}
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?siehe .env.example}
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?siehe .env.example}
+      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?siehe .env.example}
+    volumes:
+      - seaweedfs-data:/data
+    ports:
+      - "127.0.0.1:8333:8333"
+    networks: [lakenet]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    logging: *default-logging
+
+  lake-init:
+    image: localhost/taxi-pipeline/seaweedfs:0.1.0
+    entrypoint: ["/usr/local/bin/init-buckets.sh"]
+    environment:
+      SEAWEEDFS_MASTER: seaweedfs:9333
+      LAKE_BUCKETS: bronze silver gold
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    networks: [lakenet]
+    restart: on-failure:3
+    logging: *default-logging
+
+  ingestion:
+    build:
+      context: ./services/ingestion
+    image: localhost/taxi-pipeline/ingestion:0.1.0
+    # Nur die eigene Identität: Least Privilege, kein Zugriff auf silver/gold.
+    environment:
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
+      BRONZE_BUCKET: bronze
+      TLC_BASE_URL: ${TLC_BASE_URL:-https://d37ci6vzurychx.cloudfront.net/trip-data}
+      TLC_DATASET: ${TLC_DATASET:-yellow_tripdata}
+      INGEST_QUARTER: ${INGEST_QUARTER:-}
+      INGEST_MONTH: ${INGEST_MONTH:-}
+      DOWNLOAD_MAX_ATTEMPTS: ${DOWNLOAD_MAX_ATTEMPTS:-5}
+      DOWNLOAD_BACKOFF_SECONDS: ${DOWNLOAD_BACKOFF_SECONDS:-2}
+      DOWNLOAD_TIMEOUT_SECONDS: ${DOWNLOAD_TIMEOUT_SECONDS:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      lake-init:
+        condition: service_completed_successfully
+    networks: [lakenet]
+    restart: on-failure:2
+    logging: *default-logging
+
+networks:
+  lakenet:
+    name: taxi-pipeline-lakenet
+
+volumes:
+  seaweedfs-data:
+    name: taxi-pipeline-seaweedfs-data

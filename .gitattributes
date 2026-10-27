@@ -1,0 +1,6 @@
+# LF überall, damit Skripte aus einem Windows-Clone im Linux-Container laufen.
+* text=auto eol=lf
+
+*.png binary
+*.pdf binary
+*.parquet binary

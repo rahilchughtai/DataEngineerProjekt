@@ -1,0 +1,32 @@
+[project]
+name = "taxi-batch-pipeline"
+version = "0.1.0"
+description = "Batch-Datenarchitektur für Taxinachfrage (IU DLMDWWDE02)"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3",
+    "ruff==0.17.3",
+]
+
+[tool.uv]
+package = false
+
+# Zentrale Ruff-Konfiguration; gilt für alle Services, da deren pyproject.toml kein [tool.ruff] hat.
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["services/*/src"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "N", "RUF", "LOG", "PTH"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ingestion"]
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "lf"
+docstring-code-format = true

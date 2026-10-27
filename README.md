@@ -25,3 +25,45 @@ Die Verlässlichkeit ergibt sich aus idempotenten Schritten, automatischen Retri
 ![Architekturdiagramm der Batch-Pipeline](figures/architektur.png)
 
 Die editierbare Quelle des Diagramms liegt in [figures/architektur.drawio](figures/architektur.drawio).
+
+## Voraussetzungen
+
+- [Podman](https://podman.io/) mit Compose-Provider (`podman compose`) oder alternativ Docker mit `docker compose`. Die Compose-Datei hält sich an die Compose-Spezifikation und läuft mit beiden.
+- [uv](https://docs.astral.sh/uv/) für die lokale Entwicklung (Python 3.12).
+- Für den späteren Spark-Cluster braucht die Podman-Machine mehr als die standardmäßigen 2 GiB RAM (`podman machine set --memory 8192`).
+
+## Start
+
+```sh
+cp .env.example .env        # danach alle change-me-Werte durch eigene Schlüssel ersetzen
+podman compose up --build   # bzw. docker compose up --build
+```
+
+Compose startet SeaweedFS, legt über `lake-init` die Buckets `bronze`, `silver` und `gold` an und führt danach einmal den Ingestion-Service für das in `INGEST_QUARTER` (oder `INGEST_MONTH`) angegebene Quartal bzw. den Monat aus. Einzelne Läufe lassen sich auch gezielt starten:
+
+```sh
+podman compose run --rm ingestion --quarter 2024Q1
+podman compose run --rm ingestion --month 2024-01 --force
+```
+
+## Data Lake
+
+| Bucket | Inhalt | Schreibt | Liest |
+|---|---|---|---|
+| `bronze` | TLC-Dateien unverändert, `yellow_tripdata/year=YYYY/month=MM/…parquet`, Laufprotokolle unter `_runs/` | ingestion | ingestion, spark |
+| `silver` | bereinigte und validierte Fahrten | spark | spark |
+| `gold` | aggregierte Features | spark | spark, ml_reader |
+
+Jeder Service bekommt in Compose nur die Zugangsdaten seiner eigenen Identität. Die Identitäten werden beim Start von SeaweedFS aus `.env` erzeugt ([seaweedfs/s3.json.template](seaweedfs/s3.json.template)). SeaweedFS 4.x verwirft die Identitäten ohne Signing-Key stillschweigend und läuft dann ohne Authentifizierung. Der Container startet deshalb nicht, wenn `SEAWEEDFS_SIGNING_KEY` fehlt oder kürzer als 32 Zeichen ist.
+
+## Entwicklung
+
+```sh
+uv sync                                   # Dev-Tools (Ruff, pre-commit)
+uv run pre-commit install                 # Hooks für jeden Commit
+uv run ruff format . && uv run ruff check .
+uv sync --directory services/ingestion    # Umgebung eines Service, z. B. für die IDE
+```
+
+Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` unter `services/<name>/`.
+
