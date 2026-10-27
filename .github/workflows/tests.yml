@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: unit-tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Jeder Service ist ein eigenes uv-Projekt mit eigenem tests/-Verzeichnis.
+        service: [ingestion]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.10" # wie im Dockerfile
+          enable-cache: true
+          cache-dependency-glob: services/${{ matrix.service }}/uv.lock
+
+      # --frozen bricht ab, wenn uv.lock nicht zu pyproject.toml passt.
+      - run: uv sync --frozen
+      - run: uv run pytest
+
+  # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit.
+  # always(), weil GitHub einen übersprungenen Pflicht-Check als bestanden wertet.
+  tests-passed:
+    needs: [unit-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alle Unit-Tests erfolgreich
+        run: |
+          echo "unit-tests: ${{ needs.unit-tests.result }}"
+          test "${{ needs.unit-tests.result }}" = "success"

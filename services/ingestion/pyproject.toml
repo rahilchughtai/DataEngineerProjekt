@@ -12,6 +12,16 @@ dependencies = [
 [project.scripts]
 ingestion = "ingestion.cli:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "responses>=0.25",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

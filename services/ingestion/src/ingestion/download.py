@@ -51,7 +51,13 @@ class DownloadResult:
     seconds: float
 
 
-_RETRYABLE = (requests.ConnectionError, requests.Timeout, TransientDownloadError)
+# ChunkedEncodingError: urllib3 bricht ab, wenn weniger Bytes als im Content-Length ankommen.
+_RETRYABLE = (
+    requests.ConnectionError,
+    requests.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+    TransientDownloadError,
+)
 
 
 def _retrying(cfg: Config) -> Retrying:
