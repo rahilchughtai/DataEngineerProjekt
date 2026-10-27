@@ -1,0 +1,17 @@
+[project]
+name = "ingestion"
+version = "0.1.0"
+description = "Lädt NYC-TLC-Monatsdateien und legt sie unverändert in der Bronze-Schicht ab."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.35",
+    "requests>=2.32",
+    "tenacity>=9.0",
+]
+
+[project.scripts]
+ingestion = "ingestion.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
