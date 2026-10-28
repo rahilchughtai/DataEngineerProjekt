@@ -15,12 +15,19 @@ jobs:
       fail-fast: false
       matrix:
         # Jeder Service ist ein eigenes uv-Projekt mit eigenem tests/-Verzeichnis.
-        service: [ingestion]
+        service: [ingestion, spark]
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
     steps:
       - uses: actions/checkout@v5
+
+      # PySpark braucht eine JVM; Spark 4 setzt Java 17 voraus (wie im Spark-Image).
+      - if: matrix.service == 'spark'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
 
       - uses: astral-sh/setup-uv@v7
         with:

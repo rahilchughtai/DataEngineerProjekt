@@ -14,7 +14,8 @@ dev = [
 [tool.uv]
 package = false
 
-# Zentrale Ruff-Konfiguration; gilt für alle Services, da deren pyproject.toml kein [tool.ruff] hat.
+# Zentrale Ruff-Konfiguration für alle Services. services/spark erbt sie per extend und setzt
+# nur target-version auf py310 (Python des Spark-Images).
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -24,7 +25,7 @@ src = ["services/*/src"]
 select = ["E", "W", "F", "I", "UP", "B", "SIM", "N", "RUF", "LOG", "PTH"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ingestion"]
+known-first-party = ["ingestion", "spark_jobs"]
 
 [tool.ruff.format]
 quote-style = "double"

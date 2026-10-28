@@ -149,4 +149,14 @@ def main(argv: list[str] | None = None) -> int:
     log.info(
         "run=%s finished counts=%s report=s3://%s/%s", run_id, counts, cfg.bronze_bucket, report_key
     )
-    return 1 if counts.get("failed") else 0
+    return exit_code(counts)
+
+
+def exit_code(counts: dict[str, int]) -> int:
+    """1 bei fehlgeschlagenen Monaten, 3 wenn ein Monat noch nicht veröffentlicht ist, sonst 0."""
+    if counts.get("failed"):
+        return 1
+    # Wie silver-job: ein unvollständiger Zeitraum hält die Pipeline schon hier an.
+    if counts.get("not_published"):
+        return 3
+    return 0
