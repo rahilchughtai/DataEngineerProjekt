@@ -10,6 +10,7 @@ Pro Lauf entsteht ein JSON-Report mit Zählern je Regel und Laufzeiten.
 import argparse
 import json
 import logging
+import math
 import sys
 import time
 from datetime import datetime, timezone
@@ -27,6 +28,10 @@ from spark_jobs.schema import harmonize
 from spark_jobs.session import ConfigError, build_session
 
 log = logging.getLogger("bronze_to_silver")
+
+# Knapp 20 MB je Parquet-Datei. Ohne Vorgabe schreibt Spark nach dem Shuffle von dropDuplicates
+# 200 kleine Dateien je Monat (spark.sql.shuffle.partitions).
+ROWS_PER_FILE = 1_000_000
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -64,6 +69,10 @@ def rejected_rows(classified: DataFrame) -> DataFrame:
     return classified.filter(F.col("reject_reason").isNotNull())
 
 
+def files_for(rows: int) -> int:
+    return max(1, math.ceil(rows / ROWS_PER_FILE))
+
+
 def process_month(
     spark: SparkSession, month: Month, paths: LakePaths, run_id: str
 ) -> dict[str, Any]:
@@ -81,15 +90,15 @@ def write_month(
     classified: DataFrame,
     paths: LakePaths,
     month: Month,
-    has_valid: bool,
-    has_rejected: bool,
+    rows_valid: int,
+    rows_rejected: int,
 ) -> None:
     """Schreibt Silver und Quarantäne des Monats; bei einem Fehler fehlt der Monat in beiden."""
     try:
-        lake.write_partition(spark, valid_rows(classified), paths.silver_table(), month, has_valid)
-        lake.write_partition(
-            spark, rejected_rows(classified), paths.quarantine_table(), month, has_rejected
-        )
+        valid = valid_rows(classified).coalesce(files_for(rows_valid))
+        rejected = rejected_rows(classified).coalesce(files_for(rows_rejected))
+        lake.write_partition(spark, valid, paths.silver_table(), month, rows_valid > 0)
+        lake.write_partition(spark, rejected, paths.quarantine_table(), month, rows_rejected > 0)
     except Exception:
         for table in (paths.silver_table(), paths.quarantine_table()):
             target = f"{table}/{lake.partition(month)}"
@@ -121,7 +130,7 @@ def _process_month(
         rejected_by_rule = {name: by_reason.get(name, 0) for name in RULE_NAMES}
         rows_rejected = sum(rejected_by_rule.values())
         rows_valid = by_reason.get(None, 0)
-        write_month(spark, classified, paths, month, rows_valid > 0, rows_rejected > 0)
+        write_month(spark, classified, paths, month, rows_valid, rows_rejected)
     finally:
         classified.unpersist()
 

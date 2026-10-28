@@ -32,7 +32,7 @@ Die editierbare Quelle des Diagramms liegt in [figures/architektur.drawio](figur
 - [uv](https://docs.astral.sh/uv/) für die lokale Entwicklung (Python 3.12).
 - Mindestens 8 GB RAM für Container: Master, zwei Worker mit je 2 GiB und der Driver des Spark-Jobs. Bei einer Podman-Machine mit Hyper-V oder unter macOS mit `podman machine set --memory 8192` erhöhen. Unter WSL teilt sich die Machine den Speicher mit Windows.
 
-Gemessen mit 2024Q1 (9,55 Mio. Fahrten): Im Data Lake liegen danach 160 MB Bronze, 218 MB Silver (inklusive Quarantäne) und 8,4 MB Gold. Ein erneuter Lauf desselben Quartals überschreibt die Partitionen und belegt keinen zusätzlichen Platz. Der Pipeline-Lauf dauert ohne Download rund zweieinhalb Minuten: Job 1 braucht 22 bis 35 Sekunden je Monat, Job 2 6 bis 15 Sekunden. Bei weniger RAM lassen sich `SPARK_WORKER_MEMORY` und `SPARK_EXECUTOR_MEMORY` in `.env` senken.
+Gemessen mit 2024Q1 (9,55 Mio. Fahrten): Im Data Lake liegen danach 160 MB Bronze, 203 MB Silver (inklusive Quarantäne) und 8,4 MB Gold. Ein erneuter Lauf desselben Quartals überschreibt die Partitionen und belegt keinen zusätzlichen Platz. Ohne Download braucht Job 1 12 bis 21 Sekunden je Monat, Job 2 6 bis 15 Sekunden. Bei weniger RAM lassen sich `SPARK_WORKER_MEMORY` und `SPARK_EXECUTOR_MEMORY` in `.env` senken.
 
 ## Start
 

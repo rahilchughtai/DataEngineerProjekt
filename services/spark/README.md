@@ -27,7 +27,7 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 
 **Umwandlungsfehler:** Spark 4 rechnet standardmäßig im ANSI-Modus, ein normaler `cast` bricht dort bei einem unpassenden Wert den ganzen Monat ab. Die Harmonisierung nutzt deshalb `try_cast`: Der Wert wird `null` und die Zeile von den Regeln unten abgelehnt.
 
-**Schreibpfad:** S3A „benennt" beim Commit mit dem Standard-Committer per Kopieren und Löschen um. Auf SeaweedFS ist das langsamer als ein echtes Rename und nicht atomar. Die Laufzeit je Monat steht im Run-Report (`seconds`). Ein Magic-Committer wäre die Alternative, braucht aber ein weiteres Jar und ist nicht aktiviert.
+**Schreibpfad:** S3A „benennt" beim Commit mit dem Standard-Committer per Kopieren und Löschen um. Auf SeaweedFS ist das langsamer als ein echtes Rename und nicht atomar. Die Laufzeit je Monat steht im Run-Report (`seconds`). Weil jede Datei einzeln kopiert wird, schreibt der Job je angefangene Million Zeilen eine Datei (knapp 20 MB) statt der 200 Dateien, die Spark nach dem Shuffle der Deduplizierung sonst anlegt; die Quarantäne passt in eine Datei. Das halbierte die Laufzeit je Monat ungefähr. Ein Magic-Committer wäre die Alternative, braucht aber ein weiteres Jar und ist nicht aktiviert.
 
 ### Qualitätsregeln
 

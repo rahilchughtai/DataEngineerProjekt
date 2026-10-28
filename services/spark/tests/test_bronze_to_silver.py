@@ -9,7 +9,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from spark_jobs import lake
-from spark_jobs.bronze_to_silver import process_month, run
+from spark_jobs.bronze_to_silver import files_for, process_month, run
 from spark_jobs.lake import LakePaths
 from spark_jobs.periods import Month
 
@@ -71,6 +71,10 @@ def test_process_month_counts_and_writes(
 
     quarantine = spark.read.parquet(paths.quarantine_table()).collect()
     assert sorted(r["reject_reason"] for r in quarantine) == ["amount_invalid", "location_invalid"]
+
+    for table in (paths.silver_table(), paths.quarantine_table()):
+        partition = Path(table.removeprefix("file://")) / "year=2024" / "month=01"
+        assert len(list(partition.glob("*.parquet"))) == 1
 
 
 def test_rerun_is_idempotent(
@@ -196,3 +200,10 @@ def test_failure_between_writes_discards_month(
     assert "Schreibfehler" in entry["error"]
     for table in (paths.silver_table(), paths.quarantine_table()):
         assert not (Path(table.removeprefix("file://")) / "year=2024" / "month=01").exists()
+
+
+@pytest.mark.parametrize(
+    ("rows", "files"), [(0, 1), (1, 1), (1_000_000, 1), (1_000_001, 2), (3_523_771, 4)]
+)
+def test_files_for(rows: int, files: int) -> None:
+    assert files_for(rows) == files
