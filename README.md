@@ -41,7 +41,7 @@ cp .env.example .env        # danach alle change-me-Werte durch eigene Schlüsse
 podman compose up --build   # bzw. docker compose up --build
 ```
 
-Compose startet SeaweedFS und den Spark-Cluster (Master und zwei Worker) und legt über `lake-init` die Buckets `bronze`, `silver` und `gold` an. Danach führt es nacheinander und je einmal den Ingestion-Service, Spark-Job 1 (`silver-job`) und Spark-Job 2 (`gold-job`) für das in `INGEST_QUARTER` (oder `INGEST_MONTH`) angegebene Quartal bzw. den Monat aus. Die Reihenfolge sichert `depends_on` mit `service_completed_successfully` ab. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar. Einzelne Läufe lassen sich auch gezielt starten:
+Compose startet SeaweedFS und den Spark-Cluster (Master und zwei Worker) und legt über `lake-init` die Buckets `bronze`, `silver` und `gold` an. Danach führt es nacheinander und je einmal den Ingestion-Service, Spark-Job 1 (`silver-job`) und Spark-Job 2 (`gold-job`) für das in `INGEST_PERIOD` angegebene Quartal bzw. den Monat aus. Die Reihenfolge sichert `depends_on` mit `service_completed_successfully` ab. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar. Einzelne Läufe lassen sich auch gezielt starten:
 
 ```sh
 podman compose run --rm ingestion --quarter 2024Q1

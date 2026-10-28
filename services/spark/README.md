@@ -73,7 +73,7 @@ Beim Lauf über 2024Q1 (9,42 Mio. Silver-Fahrten) brauchte Job 2 je Monat 6 bis 
 ## Aufruf
 
 ```sh
-docker compose up gold-job                            # ganze Kette für INGEST_QUARTER bzw. INGEST_MONTH
+docker compose up gold-job                            # ganze Kette für INGEST_PERIOD
 docker compose up -d spark-worker                     # Cluster für Einzelläufe
 docker compose run --rm --no-deps silver-job --month 2024-01    # einzelner Monat, z. B. zur Wiederholung
 docker compose run --rm --no-deps silver-job --quarter 2024Q1
@@ -89,8 +89,8 @@ docker compose run --rm --no-deps gold-job --quarter 2024Q1
 | `S3_ENDPOINT` | – | S3-Endpoint von SeaweedFS |
 | `S3_SPARK_ACCESS_KEY` / `S3_SPARK_SECRET_KEY` | – | Identität `spark`: liest Bronze, schreibt Silver und Gold |
 | `BRONZE_BUCKET` / `SILVER_BUCKET` / `GOLD_BUCKET` | `bronze` / `silver` / `gold` | Buckets |
-| `TLC_DATASET` | `yellow_tripdata` | Präfix der Daten |
-| `INGEST_QUARTER` / `INGEST_MONTH` | – | Zeitraum, wenn kein `--quarter`/`--month` übergeben wird |
+| `TLC_DATASET` | `yellow_tripdata` | Präfix der Daten; in Compose fest, weil [schema.py](src/spark_jobs/schema.py) nur das Yellow-Schema kennt |
+| `INGEST_PERIOD` | – | Zeitraum (`YYYYQn` oder `YYYY-MM`), wenn kein `--quarter`/`--month` übergeben wird |
 | `SPARK_WORKER_CORES` / `SPARK_WORKER_MEMORY` | `2` / `2g` | Ressourcen pro Worker |
 | `SPARK_EXECUTOR_MEMORY` | `1g` | Speicher pro Executor |
 | `LOG_LEVEL` | `INFO` | Log-Level des Jobs; Spark selbst loggt auf WARN ([conf/log4j2.properties](conf/log4j2.properties)) |

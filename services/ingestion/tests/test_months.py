@@ -1,6 +1,6 @@
 import pytest
 
-from ingestion.months import Month, month_range, parse_month, quarter_months
+from ingestion.months import Month, month_range, parse_month, parse_period, quarter_months
 
 
 def test_parse_month() -> None:
@@ -58,3 +58,17 @@ def test_quarter_months(value: str, first: int, last: int) -> None:
 def test_quarter_months_rejects_invalid(value: str) -> None:
     with pytest.raises(ValueError):
         quarter_months(value)
+
+
+def test_parse_period_quarter() -> None:
+    assert parse_period(" 2024Q2 ") == [Month(2024, 4), Month(2024, 5), Month(2024, 6)]
+
+
+def test_parse_period_month() -> None:
+    assert parse_period("2024-01") == [Month(2024, 1)]
+
+
+@pytest.mark.parametrize("value", ["2024Q5", "2024-13", "2024/01", ""])
+def test_parse_period_rejects_invalid(value: str) -> None:
+    with pytest.raises(ValueError):
+        parse_period(value)

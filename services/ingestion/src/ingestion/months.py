@@ -48,3 +48,12 @@ def quarter_months(value: str) -> list[Month]:
     year, quarter = int(match[1]), int(match[2])
     first = Month(year, 3 * (quarter - 1) + 1)
     return month_range(first, Month(year, first.month + 2))
+
+
+def parse_period(value: str) -> list[Month]:
+    """Ein Quartal (YYYYQn) oder ein einzelner Monat (YYYY-MM)."""
+    if _QUARTER_RE.match(value.strip()):
+        return quarter_months(value)
+    if _MONTH_RE.match(value.strip()):
+        return [parse_month(value)]
+    raise ValueError(f"Zeitraum muss YYYYQn oder YYYY-MM sein, nicht {value!r}")

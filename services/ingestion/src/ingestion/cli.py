@@ -15,7 +15,7 @@ import requests
 from ingestion import storage
 from ingestion.config import Config, ConfigError
 from ingestion.download import InvalidFileError, NotPublishedError, download, fetch_source_info
-from ingestion.months import Month, parse_month, quarter_months
+from ingestion.months import Month, parse_month, parse_period, quarter_months
 
 log = logging.getLogger("ingestion")
 
@@ -46,20 +46,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def resolve_months(args: argparse.Namespace) -> list[Month]:
-    """CLI-Argumente haben Vorrang, sonst INGEST_QUARTER bzw. INGEST_MONTH aus der Umgebung."""
+    """CLI-Argumente haben Vorrang, sonst INGEST_PERIOD aus der Umgebung."""
     if args.quarter:
         return quarter_months(args.quarter)
     if args.month:
         return [parse_month(args.month)]
-    quarter = os.environ.get("INGEST_QUARTER", "").strip()
-    month = os.environ.get("INGEST_MONTH", "").strip()
-    if quarter and month:
-        raise ValueError("INGEST_QUARTER und INGEST_MONTH sind beide gesetzt, bitte nur eine")
-    if quarter:
-        return quarter_months(quarter)
-    if month:
-        return [parse_month(month)]
-    raise ValueError("Kein Zeitraum angegeben (--quarter/--month oder INGEST_QUARTER/INGEST_MONTH)")
+    period = os.environ.get("INGEST_PERIOD", "").strip()
+    if not period:
+        raise ValueError("Kein Zeitraum angegeben (--quarter/--month oder INGEST_PERIOD)")
+    return parse_period(period)
 
 
 def ingest_month(
