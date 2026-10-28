@@ -5,7 +5,7 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 - **Cluster:** `spark-master` (UI unter `http://127.0.0.1:8080`) und `spark-worker` mit zwei Replikas, skalierbar mit `docker compose up --scale spark-worker=N`. Die Worker bekommen keine S3-Zugangsdaten, die Executors erhalten sie über die Konfiguration des Jobs. Spark blendet sie in der UI aus (`spark.redaction.regex`).
 - **Netze:** Der Master hängt nur im Rechennetz `sparknet`, Worker und Job-Container zusätzlich im Speichernetz `lakenet`. Weil diese Container in zwei Netzen hängen, melden sie dem Master gezielt ihre Adresse in `sparknet` ([bin/master-route-address.sh](bin/master-route-address.sh)).
 - **Restrisiko:** Die Spark-RPC-Schnittstelle des Masters (Port 7077) ist nicht authentifiziert (`spark.authenticate` ist aus). Ein Container in `sparknet` könnte Code auf den Workern ausführen, die auch in `lakenet` hängen. Das begrenzen drei Dinge: In `sparknet` liegen nur Master, Worker und Jobs, die Worker besitzen keine S3-Zugangsdaten, und die Master-UI ist nur an `127.0.0.1` gebunden. Für den lokalen Betrieb ist das gewollt, in einer Cloud wären `spark.authenticate` und TLS Pflicht.
-- **Jobs** laufen im Client-Modus über [bin/submit-job.sh](bin/submit-job.sh): Der Driver läuft im One-Shot-Container, die Executors laufen auf den Workern.
+- **Jobs** laufen im Client-Modus über [bin/submit-job.sh](bin/submit-job.sh): Der Driver läuft im One-Shot-Container, die Executors laufen auf den Workern. Logging und Exit-Codes teilen sich beide Jobs ([runtime.py](src/spark_jobs/runtime.py)), ebenso das partitionsweise Überschreiben ([lake.py](src/spark_jobs/lake.py)).
 
 ## Job 1: Bronze → Silver (`silver-job`)
 
@@ -45,16 +45,42 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 
 Beim Lauf über 2024Q1 (9,55 Mio. Fahrten) wurden 1,4 % der Zeilen abgelehnt, fast alle wegen `amount_invalid`.
 
+## Job 2: Silver → Gold (`gold-job`)
+
+[silver_to_gold.py](src/spark_jobs/silver_to_gold.py) aggregiert jeden Monat aus `s3a://silver/yellow_tripdata/year=YYYY/month=MM/` zur stündlichen Nachfrage je Pickup-Zone und schreibt nach `s3a://gold/yellow_tripdata/zone_hourly/`, partitioniert nach `year=YYYY/month=MM`. Das ist die Tabelle, die die ML-Anwendung mit der Identität `ml_reader` liest.
+
+**Dichtes Raster:** Jede Zone (1 bis 265) und jede Stunde des Monats bekommt eine Zeile, auch ohne Fahrten. Ausbleibende Nachfrage ist für ein Nachfragemodell ebenfalls ein Signal, und die Zeilenzahl pro Monat steht fest: 265 × Stunden, im Januar also 197.160.
+
+| Spalte | Bedeutung |
+|---|---|
+| `pickup_hour` | Beginn der Stunde, lokale NYC-Zeit wie in Silver (`TIMESTAMP_NTZ`) |
+| `pu_location_id` | Pickup-Zone |
+| `trip_count` | Zahl der Fahrten, `0` ohne Fahrten |
+| `avg_trip_distance`, `avg_duration_minutes`, `avg_fare_amount`, `avg_total_amount` | Mittelwerte der Fahrten, `null` bei `trip_count = 0` |
+| `hour_of_day`, `day_of_week`, `is_weekend` | Kalendermerkmale, `day_of_week` von 1 (Montag) bis 7 (Sonntag) |
+| `_run_id`, `_processed_at` | Lineage: Lauf von Job 2 |
+
+Lag-Features wie die Nachfrage der Vorwoche fehlen bewusst. Sie bräuchten Daten des Vormonats, und ein Monat ließe sich dann nicht mehr für sich neu berechnen. Die ML-Anwendung bildet sie beim Training aus der Zeitreihe. Weil die Zeit lokal ist, hat die Stunde der Sommerzeitumstellung im März keine Fahrten, die im November enthält zwei echte Stunden.
+
+**Abgleich:** Vor dem Schreiben muss die Summe von `trip_count` genau der Zahl der Silver-Zeilen des Monats entsprechen. Fiele eine Fahrt beim Join auf das Raster still weg (Zone oder Zeit außerhalb), gilt der Monat als `failed`. Wie in Job 1 wird die Gold-Partition dann gelöscht, statt einen alten Stand neben neuem Silver stehen zu lassen.
+
+**Report** pro Lauf nach `s3a://gold/_runs/yellow_tripdata/<run_id>.json`, je Monat mit `rows_silver`, `rows_gold`, `trips_in_gold`, `rows_without_trips`, `silver_run_ids` (aus welchen Läufen von Job 1 die Daten stammen) und Laufzeit. Über `_run_id` in Silver und `_source_file` lässt sich jede Gold-Partition so bis zur Bronze-Datei zurückverfolgen.
+
+Idempotenz und Exit-Codes wie bei Job 1; Exit `3` heißt hier, dass für einen Monat Silver-Daten fehlen. Jeder Monat wird als eine Datei geschrieben, weil Spark nach dem Join sonst 200 Dateien mit je rund 1.000 Zeilen anlegt.
+
+Beim Lauf über 2024Q1 (9,42 Mio. Silver-Fahrten) brauchte Job 2 je Monat 6 bis 15 Sekunden, Gold umfasst 578.760 Zeilen und 8,4 MB. 55 bis 61 % der Zone-Stunden haben keine Fahrt, vor allem in Randzonen und nachts.
+
 ## Aufruf
 
 ```sh
-docker compose up silver-job                          # Zeitraum aus INGEST_QUARTER bzw. INGEST_MONTH
+docker compose up gold-job                            # ganze Kette für INGEST_QUARTER bzw. INGEST_MONTH
 docker compose up -d spark-worker                     # Cluster für Einzelläufe
 docker compose run --rm --no-deps silver-job --month 2024-01    # einzelner Monat, z. B. zur Wiederholung
 docker compose run --rm --no-deps silver-job --quarter 2024Q1
+docker compose run --rm --no-deps gold-job --quarter 2024Q1
 ```
 
-`--no-deps` verhindert, dass vorher `ingestion` für den Zeitraum aus `.env` läuft; die Bronze-Daten des gewünschten Zeitraums müssen schon vorliegen.
+`--no-deps` verhindert, dass vorher die Schritte davor für den Zeitraum aus `.env` laufen; die Bronze- bzw. Silver-Daten des gewünschten Zeitraums müssen schon vorliegen.
 
 ## Umgebungsvariablen
 
@@ -62,7 +88,7 @@ docker compose run --rm --no-deps silver-job --quarter 2024Q1
 |---|---|---|
 | `S3_ENDPOINT` | – | S3-Endpoint von SeaweedFS |
 | `S3_SPARK_ACCESS_KEY` / `S3_SPARK_SECRET_KEY` | – | Identität `spark`: liest Bronze, schreibt Silver und Gold |
-| `BRONZE_BUCKET` / `SILVER_BUCKET` | `bronze` / `silver` | Buckets |
+| `BRONZE_BUCKET` / `SILVER_BUCKET` / `GOLD_BUCKET` | `bronze` / `silver` / `gold` | Buckets |
 | `TLC_DATASET` | `yellow_tripdata` | Präfix der Daten |
 | `INGEST_QUARTER` / `INGEST_MONTH` | – | Zeitraum, wenn kein `--quarter`/`--month` übergeben wird |
 | `SPARK_WORKER_CORES` / `SPARK_WORKER_MEMORY` | `2` / `2g` | Ressourcen pro Worker |

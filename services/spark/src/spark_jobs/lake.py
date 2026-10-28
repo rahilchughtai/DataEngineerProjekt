@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 
 from spark_jobs.periods import Month
 
@@ -17,6 +17,7 @@ from spark_jobs.periods import Month
 class LakePaths:
     bronze: str
     silver: str
+    gold: str
     dataset: str
 
     @classmethod
@@ -24,6 +25,7 @@ class LakePaths:
         return cls(
             bronze=f"s3a://{os.environ.get('BRONZE_BUCKET', 'bronze')}",
             silver=f"s3a://{os.environ.get('SILVER_BUCKET', 'silver')}",
+            gold=f"s3a://{os.environ.get('GOLD_BUCKET', 'gold')}",
             dataset=os.environ.get("TLC_DATASET", "yellow_tripdata"),
         )
 
@@ -33,11 +35,20 @@ class LakePaths:
     def silver_table(self) -> str:
         return f"{self.silver}/{self.dataset}"
 
+    def silver_month(self, month: Month) -> str:
+        return f"{self.silver_table()}/{partition(month)}"
+
     def quarantine_table(self) -> str:
         return f"{self.silver}/_quarantine/{self.dataset}"
 
     def run_report(self, run_id: str) -> str:
         return f"{self.silver}/_runs/{self.dataset}/{run_id}.json"
+
+    def gold_table(self) -> str:
+        return f"{self.gold}/{self.dataset}/zone_hourly"
+
+    def gold_run_report(self, run_id: str) -> str:
+        return f"{self.gold}/_runs/{self.dataset}/{run_id}.json"
 
 
 def partition(month: Month) -> str:
@@ -67,3 +78,20 @@ def write_text(spark: SparkSession, path: str, text: str) -> None:
         stream.write(bytearray(text.encode()))
     finally:
         stream.close()
+
+
+def write_partition(
+    spark: SparkSession, df: DataFrame, table: str, month: Month, has_rows: bool
+) -> None:
+    """Überschreibt genau die Partition des Monats, alle anderen bleiben unverändert."""
+    if not has_rows:
+        # Ein leerer DataFrame schreibt keine Partition und würde einen alten Stand stehen lassen.
+        delete(spark, f"{table}/{partition(month)}")
+        return
+    (
+        df.write.mode("overwrite")
+        # Idempotenz: dynamic ersetzt nur die Partitionen, die dieser Schreibvorgang enthält.
+        .option("partitionOverwriteMode", "dynamic")
+        .partitionBy("year", "month")
+        .parquet(table)
+    )

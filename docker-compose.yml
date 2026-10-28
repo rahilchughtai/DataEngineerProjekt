@@ -156,6 +156,36 @@ services:
     restart: "no"
     logging: *default-logging
 
+  # Spark-Job 2: stündliche Nachfrage je Zone aus Silver nach Gold. Einzelläufe wie beim
+  # silver-job mit docker compose run --rm --no-deps gold-job --month 2024-01.
+  gold-job:
+    image: localhost/taxi-pipeline/spark:0.1.0
+    entrypoint:
+      - /usr/local/bin/submit-job.sh
+      - /opt/spark-jobs/spark_jobs/silver_to_gold.py
+    command: []
+    environment:
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+      SILVER_BUCKET: silver
+      GOLD_BUCKET: gold
+      SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
+      TLC_DATASET: ${TLC_DATASET:-yellow_tripdata}
+      INGEST_QUARTER: ${INGEST_QUARTER:-}
+      INGEST_MONTH: ${INGEST_MONTH:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      silver-job:
+        condition: service_completed_successfully
+      spark-worker:
+        condition: service_healthy
+    networks: [sparknet, lakenet]
+    restart: "no"
+    logging: *default-logging
+
 networks:
   lakenet:
     name: taxi-pipeline-lakenet

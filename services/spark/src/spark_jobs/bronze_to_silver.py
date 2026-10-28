@@ -10,7 +10,6 @@ Pro Lauf entsteht ein JSON-Report mit Zählern je Regel und Laufzeiten.
 import argparse
 import json
 import logging
-import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -23,20 +22,11 @@ from spark_jobs import lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.periods import Month, add_period_args, resolve_months
 from spark_jobs.quality import RULE_NAMES, classify
+from spark_jobs.runtime import exit_code, setup_logging
 from spark_jobs.schema import harmonize
 from spark_jobs.session import ConfigError, build_session
 
 log = logging.getLogger("bronze_to_silver")
-
-
-def _setup_logging() -> None:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S%z",
-        stream=sys.stdout,
-    )
-    logging.getLogger("py4j").setLevel(logging.WARNING)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -74,23 +64,6 @@ def rejected_rows(classified: DataFrame) -> DataFrame:
     return classified.filter(F.col("reject_reason").isNotNull())
 
 
-def write_partition(
-    spark: SparkSession, df: DataFrame, table: str, month: Month, has_rows: bool
-) -> None:
-    """Überschreibt genau die Partition des Monats, alle anderen bleiben unverändert."""
-    if not has_rows:
-        # Ein leerer DataFrame schreibt keine Partition und würde einen alten Stand stehen lassen.
-        lake.delete(spark, f"{table}/{lake.partition(month)}")
-        return
-    (
-        df.write.mode("overwrite")
-        # Idempotenz: dynamic ersetzt nur die Partitionen, die dieser Schreibvorgang enthält.
-        .option("partitionOverwriteMode", "dynamic")
-        .partitionBy("year", "month")
-        .parquet(table)
-    )
-
-
 def process_month(
     spark: SparkSession, month: Month, paths: LakePaths, run_id: str
 ) -> dict[str, Any]:
@@ -113,8 +86,8 @@ def write_month(
 ) -> None:
     """Schreibt Silver und Quarantäne des Monats; bei einem Fehler fehlt der Monat in beiden."""
     try:
-        write_partition(spark, valid_rows(classified), paths.silver_table(), month, has_valid)
-        write_partition(
+        lake.write_partition(spark, valid_rows(classified), paths.silver_table(), month, has_valid)
+        lake.write_partition(
             spark, rejected_rows(classified), paths.quarantine_table(), month, has_rejected
         )
     except Exception:
@@ -197,19 +170,8 @@ def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str)
     return report
 
 
-def exit_code(report: dict[str, Any]) -> int:
-    """1 bei fehlgeschlagenen Monaten, 3 wenn Bronze-Daten für einen Monat fehlen, sonst 0."""
-    counts = report["counts"]
-    if counts.get("failed"):
-        return 1
-    if counts.get("missing") or not counts.get("processed"):
-        log.error("Bronze-Daten fehlen, Zeitraum unvollständig: counts=%s", counts)
-        return 3
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
-    _setup_logging()
+    setup_logging()
     try:
         args = _parse_args(argv)
         months = resolve_months(args)
@@ -225,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         report = run(spark, months, paths, run_id)
     finally:
         spark.stop()
-    return exit_code(report)
+    return exit_code(report, "Bronze")
 
 
 if __name__ == "__main__":
