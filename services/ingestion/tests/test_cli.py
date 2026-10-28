@@ -2,7 +2,7 @@ import argparse
 
 import pytest
 
-from ingestion.cli import resolve_months
+from ingestion.cli import exit_code, resolve_months
 from ingestion.months import Month
 
 
@@ -41,3 +41,17 @@ def test_both_environment_variables_conflict(monkeypatch: pytest.MonkeyPatch) ->
 def test_no_period_given() -> None:
     with pytest.raises(ValueError, match="Kein Zeitraum"):
         resolve_months(_args())
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        ({"loaded": 3}, 0),
+        ({"loaded": 1, "skipped": 2}, 0),
+        ({"loaded": 2, "not_published": 1}, 3),
+        ({"loaded": 2, "failed": 1}, 1),
+        ({"failed": 1, "not_published": 1}, 1),
+    ],
+)
+def test_exit_code(counts: dict[str, int], expected: int) -> None:
+    assert exit_code(counts) == expected

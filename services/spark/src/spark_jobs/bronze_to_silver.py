@@ -119,7 +119,11 @@ def write_month(
         )
     except Exception:
         for table in (paths.silver_table(), paths.quarantine_table()):
-            lake.delete(spark, f"{table}/{lake.partition(month)}")
+            target = f"{table}/{lake.partition(month)}"
+            try:
+                lake.delete(spark, target)
+            except Exception:
+                log.exception("month=%s Aufräumen fehlgeschlagen: %s", month, target)
         raise
 
 

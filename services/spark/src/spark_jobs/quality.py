@@ -59,7 +59,9 @@ RULES: dict[str, Callable[[Month], Column]] = {
     "pickup_outside_month": _pickup_outside_month,
     "negative_duration": lambda _: _duration_seconds() < 0,
     "duration_over_24h": lambda _: _duration_seconds() > MAX_DURATION_SECONDS,
-    "distance_invalid": lambda _: _out_of_range("trip_distance", 0, MAX_TRIP_DISTANCE_MILES),
+    "distance_invalid": lambda _: (
+        _out_of_range("trip_distance", 0, MAX_TRIP_DISTANCE_MILES) | F.isnan("trip_distance")
+    ),
     # Negative Beträge sind Stornos oder Korrekturbuchungen, keine Fahrten.
     # Spark ordnet NaN über jede Zahl, `< 0` greift also nicht.
     "amount_invalid": lambda _: (

@@ -33,6 +33,4 @@ def build_session(app_name: str) -> SparkSession:
     builder = SparkSession.builder.appName(app_name)
     for key, value in s3_conf().items():
         builder = builder.config(key, value)
-    spark = builder.getOrCreate()
-    spark.sparkContext.setLogLevel(os.environ.get("SPARK_LOG_LEVEL", "WARN"))
-    return spark
+    return builder.getOrCreate()

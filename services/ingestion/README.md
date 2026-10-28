@@ -5,7 +5,7 @@ Lädt die monatlichen NYC TLC Yellow Taxi Trip Records per HTTPS und legt sie un
 - **Idempotent:** Der Key hängt nur vom Monat ab. Ein Monat wird übersprungen, wenn der ETag der Quelle mit dem in Bronze gespeicherten übereinstimmt. Mit `--force` wird er neu geladen und das Objekt atomar überschrieben, Duplikate entstehen nicht.
 - **Retries:** HEAD und Download werden bei Netzwerkfehlern, HTTP 5xx/429 und unvollständiger Übertragung mit exponentiellem Backoff wiederholt. HTTP 403/404 gilt als „noch nicht veröffentlicht“ und wird ohne Retry protokolliert.
 - **Integrität und Lineage:** Die Parquet-Magic-Bytes werden geprüft, die SHA-256-Summe wird beim Streamen berechnet. Jedes Objekt trägt die Metadaten `source-url`, `source-etag`, `source-last-modified`, `sha256`, `size-bytes`, `ingested-at` und `ingested-by`. Pro Lauf entsteht ein JSON-Protokoll mit Status und Latenzen unter `s3://bronze/_runs/yellow_tripdata/`.
-- **Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration.
+- **Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration, `3` wenn mindestens ein Monat noch nicht veröffentlicht ist. Wie bei `silver-job` gilt ein unvollständiger Zeitraum nicht als Erfolg, die Pipeline hält also schon hier an.
 
 ## Aufruf
 
