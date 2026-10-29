@@ -4,7 +4,8 @@ Aggregiert pro Monat die bereinigten Fahrten aus Silver zur stündlichen Nachfra
 Das Raster ist dicht: Jede Zone und jede Stunde des Monats steht in Gold, Stunden ohne Fahrten mit
 trip_count = 0, weil auch ausbleibende Nachfrage ein Trainingssignal ist. Gold ist wie Silver nach
 year/month partitioniert und wird pro Monat überschrieben (idempotent). Bevor geschrieben wird,
-muss die Summe von trip_count genau der Zahl der Silver-Zeilen entsprechen.
+muss die Summe von trip_count genau der Zahl der Silver-Zeilen entsprechen und Silver aus genau
+einem Lauf von Job 1 stammen; sonst bleibt der bisherige Gold-Monat unverändert.
 """
 
 import argparse
@@ -23,7 +24,7 @@ from spark_jobs import lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.periods import Month, add_period_args, resolve_months
 from spark_jobs.quality import LOCATION_ID_RANGE, month_bounds
-from spark_jobs.runtime import exit_code, setup_logging
+from spark_jobs.runtime import exit_code, resolve_run_id, setup_logging
 from spark_jobs.session import ConfigError, build_session
 
 log = logging.getLogger("silver_to_gold")
@@ -131,15 +132,25 @@ def process_month(
         return entry | {"status": "failed", "error": str(err)}
 
 
+def check_month(stats: dict[str, Any], silver_run_ids: list[str]) -> None:
+    """Prüft vor dem Schreiben; schlägt die Prüfung fehl, bleibt der bisherige Gold-Monat stehen."""
+    # Job 1 ersetzt einen Monat immer ganz. Mehrere Läufe in einer Partition deuten auf einen
+    # abgebrochenen Commit oder parallele Läufe hin.
+    if len(silver_run_ids) > 1:
+        raise ReconciliationError(
+            f"Silver enthält Daten aus mehreren Läufen von Job 1: {', '.join(silver_run_ids)}"
+        )
+    if stats["trips_in_gold"] != stats["rows_silver"]:
+        raise ReconciliationError(
+            f"Gold enthält {stats['trips_in_gold']} Fahrten, Silver {stats['rows_silver']}"
+        )
+
+
 def write_month(
     spark: SparkSession, gold: DataFrame, paths: LakePaths, month: Month, stats: dict[str, Any]
 ) -> None:
-    """Schreibt den Monat nach Gold; bei einem Fehler fehlt er dort ganz statt veraltet."""
+    """Überschreibt den Monat in Gold; scheitert das Schreiben, fehlt er ganz statt halb ersetzt."""
     try:
-        if stats["trips_in_gold"] != stats["rows_silver"]:
-            raise ReconciliationError(
-                f"Gold enthält {stats['trips_in_gold']} Fahrten, Silver {stats['rows_silver']}"
-            )
         # Ein Monat Gold sind wenige MB; ohne coalesce entstünden 200 Dateien (shuffle.partitions).
         lake.write_partition(
             spark, gold.coalesce(1), paths.gold_table(), month, stats["rows_gold"] > 0
@@ -188,6 +199,7 @@ def _process_month(
                 "trips_in_gold": totals["trips_in_gold"] or 0,
                 "rows_without_trips": totals["rows_without_trips"] or 0,
             }
+            check_month(stats, sorted(by_run))
             write_month(spark, gold, paths, month, stats)
         finally:
             gold.unpersist()
@@ -246,12 +258,12 @@ def main(argv: list[str] | None = None) -> int:
         args = _parse_args(argv)
         months = resolve_months(args)
         paths = LakePaths.from_env()
+        run_id = resolve_run_id()
         spark = build_session("silver_to_gold")
     except (ValueError, ConfigError) as err:
         log.error("%s", err)
         return 2
 
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log.info("run=%s months=%s", run_id, ",".join(map(str, months)))
     try:
         report = run(spark, months, paths, run_id)

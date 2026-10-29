@@ -168,12 +168,43 @@ def test_schema_error_marks_month_failed(
 def test_unconvertible_value_is_quarantined_not_fatal(
     bronze: Callable[..., DataFrame], put_bronze: Any, spark: SparkSession, paths: LakePaths
 ) -> None:
-    put_bronze(JANUARY, bronze({}).withColumn("PULocationID", F.lit(1e12)))
+    # Eine gültige Fahrt dazu, sonst wäre der Monat ganz abgelehnt und damit failed.
+    unconvertible = F.when(F.col("VendorID") == 1, F.lit(1e12)).otherwise(F.col("PULocationID"))
+    put_bronze(JANUARY, bronze({}, {"VendorID": 1}).withColumn("PULocationID", unconvertible))
 
     entry = process_month(spark, JANUARY, paths, RUN_ID)
 
     assert entry["status"] == "processed"
+    assert entry["rows_valid"] == 1
     assert entry["rejected_by_rule"]["location_invalid"] == 1
+
+
+def test_all_rows_rejected_marks_month_failed(
+    spark: SparkSession, bronze: Callable[..., DataFrame], put_bronze: Any, paths: LakePaths
+) -> None:
+    put_bronze(JANUARY, january_sample(bronze))
+    process_month(spark, JANUARY, paths, RUN_ID)
+
+    put_bronze(JANUARY, bronze({"fare_amount": -3.0}, {"PULocationID": 999}))
+    entry = process_month(spark, JANUARY, paths, "20240402T000000Z")
+
+    assert entry["status"] == "failed"
+    assert entry["rows_valid"] == 0
+    assert entry["rows_rejected"] == 2
+    assert {r["_run_id"] for r in silver(spark, paths).collect()} == {RUN_ID}
+    assert spark.read.parquet(paths.quarantine_table()).count() == 2
+
+
+def test_empty_bronze_marks_month_failed(
+    spark: SparkSession, bronze: Callable[..., DataFrame], put_bronze: Any, paths: LakePaths
+) -> None:
+    put_bronze(JANUARY, bronze())
+
+    report = run(spark, [JANUARY], paths, RUN_ID)
+
+    assert report["counts"] == {"failed": 1}
+    assert report["months"][0]["rows_in"] == 0
+    assert not Path(paths.silver_table().removeprefix("file://")).exists()
 
 
 def test_failure_between_writes_discards_month(

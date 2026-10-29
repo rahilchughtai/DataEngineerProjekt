@@ -23,7 +23,7 @@ from spark_jobs import lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.periods import Month, add_period_args, resolve_months
 from spark_jobs.quality import RULE_NAMES, classify
-from spark_jobs.runtime import exit_code, setup_logging
+from spark_jobs.runtime import exit_code, resolve_run_id, setup_logging
 from spark_jobs.schema import harmonize
 from spark_jobs.session import ConfigError, build_session
 
@@ -130,30 +130,41 @@ def _process_month(
         rejected_by_rule = {name: by_reason.get(name, 0) for name in RULE_NAMES}
         rows_rejected = sum(rejected_by_rule.values())
         rows_valid = by_reason.get(None, 0)
-        write_month(spark, classified, paths, month, rows_valid, rows_rejected)
+        if rows_valid > 0:
+            write_month(spark, classified, paths, month, rows_valid, rows_rejected)
     finally:
         classified.unpersist()
 
-    duplicates = rows_in - sum(by_reason.values())
+    counts = {
+        "rows_in": rows_in,
+        "rows_valid": rows_valid,
+        "rows_rejected": rows_rejected,
+        "duplicates": rows_in - sum(by_reason.values()),
+        "rejected_by_rule": rejected_by_rule,
+    }
     seconds = round(time.monotonic() - started, 2)
+    if rows_valid == 0:
+        # Eine leere oder komplett abgelehnte Datei ist kein gültiger Monat. Silver und
+        # Quarantäne behalten ihren bisherigen Stand, Gold findet so keine leere Partition.
+        log.error(
+            "month=%s status=failed keine gültigen Zeilen rows_in=%d rejected=%d",
+            month,
+            rows_in,
+            rows_rejected,
+        )
+        error = "Keine gültigen Zeilen; Silver und Quarantäne bleiben unverändert"
+        return entry | {"status": "failed", "error": error} | counts | {"seconds": seconds}
+
     log.info(
         "month=%s status=processed rows_in=%d valid=%d rejected=%d duplicates=%d seconds=%.1f",
         month,
         rows_in,
         rows_valid,
         rows_rejected,
-        duplicates,
+        counts["duplicates"],
         seconds,
     )
-    return entry | {
-        "status": "processed",
-        "rows_in": rows_in,
-        "rows_valid": rows_valid,
-        "rows_rejected": rows_rejected,
-        "duplicates": duplicates,
-        "rejected_by_rule": rejected_by_rule,
-        "seconds": seconds,
-    }
+    return entry | {"status": "processed"} | counts | {"seconds": seconds}
 
 
 def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str) -> dict[str, Any]:
@@ -185,12 +196,12 @@ def main(argv: list[str] | None = None) -> int:
         args = _parse_args(argv)
         months = resolve_months(args)
         paths = LakePaths.from_env()
+        run_id = resolve_run_id()
         spark = build_session("bronze_to_silver")
     except (ValueError, ConfigError) as err:
         log.error("%s", err)
         return 2
 
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log.info("run=%s months=%s", run_id, ",".join(map(str, months)))
     try:
         report = run(spark, months, paths, run_id)

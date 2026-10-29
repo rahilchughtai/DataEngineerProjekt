@@ -8,6 +8,7 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from spark_jobs import lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.periods import Month
 from spark_jobs.silver_to_gold import (
@@ -222,7 +223,7 @@ def test_missing_silver_month(spark: SparkSession, paths: LakePaths) -> None:
     assert entry["status"] == "missing"
 
 
-def test_reconciliation_failure_discards_month(
+def test_reconciliation_failure_keeps_previous_month(
     spark: SparkSession, silver: Callable[..., DataFrame], put_silver: Any, paths: LakePaths
 ) -> None:
     put_silver(JANUARY, silver(at(15, 8)))
@@ -234,6 +235,40 @@ def test_reconciliation_failure_discards_month(
 
     assert entry["status"] == "failed"
     assert "Gold enthält 1 Fahrten, Silver 2" in entry["error"]
+    rows = gold(spark, paths).collect()
+    assert {r["_run_id"] for r in rows} == {RUN_ID}
+    assert sum(r["trip_count"] for r in rows) == 1
+
+
+def test_mixed_silver_runs_fail(
+    spark: SparkSession, silver: Callable[..., DataFrame], put_silver: Any, paths: LakePaths
+) -> None:
+    put_silver(JANUARY, silver(at(15, 8), at(15, 9) | {"_run_id": "20240330T000000Z"}))
+
+    entry = process_month(spark, JANUARY, paths, RUN_ID, ZONES)
+
+    assert entry["status"] == "failed"
+    assert "mehreren Läufen" in entry["error"]
+    assert not gold_partition(paths, "01").exists()
+
+
+def test_write_failure_discards_month(
+    spark: SparkSession,
+    silver: Callable[..., DataFrame],
+    put_silver: Any,
+    paths: LakePaths,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    put_silver(JANUARY, silver(at(15, 8)))
+    process_month(spark, JANUARY, paths, RUN_ID, ZONES)
+
+    def fail(*_: Any) -> None:
+        raise OSError("Schreibfehler")
+
+    monkeypatch.setattr(lake, "write_partition", fail)
+    entry = process_month(spark, JANUARY, paths, "20240402T000000Z", ZONES)
+
+    assert entry["status"] == "failed"
     assert not gold_partition(paths, "01").exists()
 
 

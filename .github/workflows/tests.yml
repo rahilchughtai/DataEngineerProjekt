@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         # Jeder Service ist ein eigenes uv-Projekt mit eigenem tests/-Verzeichnis.
-        service: [ingestion, spark]
+        service: [ingestion, spark, orchestrator]
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
@@ -39,14 +39,85 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest
 
+  # Ruff mit der zentralen Konfiguration aus pyproject.toml; die pre-commit-Hooks lassen sich
+  # lokal umgehen. Ohne --fix, damit Abweichungen den Check scheitern lassen.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  # Synthetischer End-to-End-Lauf mit den echten Images, SeaweedFS und dem Spark-Cluster, ohne
+  # TLC-Download. Prüft Startreihenfolge über depends_on bei compose run, Zugangsdaten, S3A,
+  # Wiederholung und einen fehlenden Monat. Bewusst kein Pflicht-Check (nicht in tests-passed):
+  # Er dauert einige Minuten und hängt von Docker Hub und Maven Central ab. Podman deckt er nicht ab.
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.10"
+
+      - name: .env aus dem Beispiel
+        run: cp .env.example .env
+
+      - run: docker compose --profile jobs build
+
+      # Startet SeaweedFS über depends_on und wartet auf dessen Healthcheck.
+      - name: Data Lake und Buckets
+        run: docker compose run --rm lake-init
+
+      - name: Synthetische Bronze-Daten für 2024-01
+        run: uv run --no-project --with pyarrow --with boto3 python .github/scripts/smoke_lake.py seed
+
+      - name: Job 1 und Job 2, zweimal (idempotent)
+        run: |
+          for attempt in 1 2; do
+            echo "::group::Durchlauf $attempt"
+            docker compose run --rm silver-job --month 2024-01
+            docker compose run --rm gold-job --month 2024-01
+            uv run --no-project --with boto3 python .github/scripts/smoke_lake.py check
+            echo "::endgroup::"
+          done
+
+      - name: Fehlender Silver-Monat endet mit Exit-Code 3
+        run: |
+          set +e
+          docker compose run --rm gold-job --month 2024-02
+          code=$?
+          echo "exit code: $code"
+          test "$code" -eq 3
+
+      - name: Logs
+        if: failure()
+        run: docker compose --profile jobs logs --no-color
+
+      - name: Aufräumen
+        if: always()
+        run: docker compose --profile jobs down --volumes
+
   # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit.
   # always(), weil GitHub einen übersprungenen Pflicht-Check als bestanden wertet.
   tests-passed:
-    needs: [unit-tests]
+    needs: [unit-tests, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Alle Unit-Tests erfolgreich
+      - name: Alle Unit-Tests und Lint erfolgreich
         run: |
           echo "unit-tests: ${{ needs.unit-tests.result }}"
+          echo "lint: ${{ needs.lint.result }}"
           test "${{ needs.unit-tests.result }}" = "success"
+          test "${{ needs.lint.result }}" = "success"

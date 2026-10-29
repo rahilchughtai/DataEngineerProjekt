@@ -6,6 +6,29 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "3"
 
+x-healthcheck: &default-healthcheck
+  interval: 5s
+  timeout: 3s
+  retries: 20
+  start_period: 10s
+
+x-spark-job-env: &spark-job-env
+  S3_ENDPOINT: http://seaweedfs:8333
+  S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
+  S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+  SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+  TLC_DATASET: yellow_tripdata
+  INGEST_PERIOD: ${INGEST_PERIOD:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+# Spark-Jobs als One-Shot-Container (Driver im Client-Modus).
+x-spark-job: &spark-job
+  image: localhost/taxi-pipeline/spark:0.1.0
+  profiles: [jobs]
+  command: []
+  networks: [sparknet, lakenet]
+  logging: *default-logging
+
 services:
   seaweedfs:
     build:
@@ -28,11 +51,8 @@ services:
     networks: [lakenet]
     restart: unless-stopped
     healthcheck:
+      <<: *default-healthcheck
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
     logging: *default-logging
 
   lake-init:
@@ -45,10 +65,10 @@ services:
       seaweedfs:
         condition: service_healthy
     networks: [lakenet]
-    restart: "no"
     logging: *default-logging
 
   ingestion:
+    profiles: [jobs]
     build:
       context: ./services/ingestion
     image: localhost/taxi-pipeline/ingestion:0.1.0
@@ -66,7 +86,6 @@ services:
       lake-init:
         condition: service_completed_successfully
     networks: [lakenet]
-    restart: "no"
     logging: *default-logging
 
   spark-master:
@@ -88,11 +107,8 @@ services:
     networks: [sparknet]
     restart: unless-stopped
     healthcheck:
+      <<: *default-healthcheck
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
     logging: *default-logging
 
   spark-worker:
@@ -111,68 +127,41 @@ services:
     networks: [sparknet, lakenet]
     restart: unless-stopped
     healthcheck:
+      <<: *default-healthcheck
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8081"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-      start_period: 10s
     logging: *default-logging
 
-  # Spark-Job 1 als One-Shot-Container (Driver im Client-Modus). Für einen anderen Zeitraum
-  # docker compose run --rm --no-deps silver-job --month 2024-01, sonst lädt die Abhängigkeit
-  # ingestion zuerst den Zeitraum aus .env.
+  # Job 1: Bronze nach Silver; Bronze-Daten müssen bereits vorliegen.
   silver-job:
-    image: localhost/taxi-pipeline/spark:0.1.0
+    <<: *spark-job
     entrypoint:
       - /usr/local/bin/submit-job.sh
       - /opt/spark-jobs/spark_jobs/bronze_to_silver.py
-    command: []
     environment:
-      S3_ENDPOINT: http://seaweedfs:8333
-      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
-      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+      <<: *spark-job-env
       BRONZE_BUCKET: bronze
       SILVER_BUCKET: silver
-      SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
-      TLC_DATASET: yellow_tripdata
-      INGEST_PERIOD: ${INGEST_PERIOD:-}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
-      ingestion:
+      lake-init:
         condition: service_completed_successfully
       spark-worker:
         condition: service_healthy
-    networks: [sparknet, lakenet]
-    # Kein on-failure: Compose würde auch Exit 2 (Konfiguration) und 3 (Bronze-Monat fehlt) wiederholen.
-    restart: "no"
-    logging: *default-logging
 
-  # Spark-Job 2: stündliche Nachfrage je Zone aus Silver nach Gold. Einzelläufe wie beim
-  # silver-job mit docker compose run --rm --no-deps gold-job --month 2024-01.
+  # Job 2: stündliche Nachfrage je Zone aus Silver nach Gold, Einzelläufe wie beim silver-job.
   gold-job:
-    image: localhost/taxi-pipeline/spark:0.1.0
+    <<: *spark-job
     entrypoint:
       - /usr/local/bin/submit-job.sh
       - /opt/spark-jobs/spark_jobs/silver_to_gold.py
-    command: []
     environment:
-      S3_ENDPOINT: http://seaweedfs:8333
-      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
-      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+      <<: *spark-job-env
       SILVER_BUCKET: silver
       GOLD_BUCKET: gold
-      SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
-      TLC_DATASET: yellow_tripdata
-      INGEST_PERIOD: ${INGEST_PERIOD:-}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
-      silver-job:
+      lake-init:
         condition: service_completed_successfully
       spark-worker:
         condition: service_healthy
-    networks: [sparknet, lakenet]
-    restart: "no"
-    logging: *default-logging
 
 networks:
   lakenet:

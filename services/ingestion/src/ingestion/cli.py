@@ -3,6 +3,8 @@
 import argparse
 import logging
 import os
+import re
+import secrets
 import sys
 import tempfile
 import time
@@ -18,6 +20,9 @@ from ingestion.download import InvalidFileError, NotPublishedError, download, fe
 from ingestion.months import Month, parse_month, parse_period, quarter_months
 
 log = logging.getLogger("ingestion")
+
+RUN_ID_ENV = "PIPELINE_RUN_ID"
+RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
 
 
 def _setup_logging() -> None:
@@ -97,17 +102,34 @@ def ingest_month(
     }
 
 
+def new_run_id() -> str:
+    """Nach Startzeit sortierbar; der Zufallsteil trennt Läufe, die in derselben Sekunde starten."""
+    return f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
+
+
+def resolve_run_id() -> str:
+    """Run-ID des Orchestrators aus PIPELINE_RUN_ID, bei Einzelaufruf eine neue."""
+    run_id = os.environ.get(RUN_ID_ENV, "").strip()
+    if not run_id:
+        return new_run_id()
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        raise ValueError(
+            f"Ungültige {RUN_ID_ENV} {run_id!r}, erwartet YYYYMMDDTHHMMSSZ-xxxxxx (hex)"
+        )
+    return run_id
+
+
 def main(argv: list[str] | None = None) -> int:
     _setup_logging()
     try:
         args = _parse_args(argv)
         months = resolve_months(args)
         cfg = Config.from_env()
+        run_id = resolve_run_id()
     except (ValueError, ConfigError) as err:
         log.error("%s", err)
         return 2
 
-    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     log.info("run=%s months=%s", run_id, ",".join(map(str, months)))
 
     s3 = storage.make_client(cfg)

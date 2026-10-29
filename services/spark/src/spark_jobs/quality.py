@@ -44,6 +44,14 @@ def _pickup_outside_month(month: Month) -> Column:
     return (pickup < start) | (pickup >= end)
 
 
+def _amount_invalid(_: Month) -> Column:
+    def invalid(name: str) -> Column:
+        column = F.col(name)
+        return column.isNull() | F.isnan(name) | (column < 0) | (column == F.lit(float("inf")))
+
+    return invalid("fare_amount") | invalid("total_amount")
+
+
 def _location_invalid(_: Month) -> Column:
     low_id, high_id = LOCATION_ID_RANGE
     return _out_of_range("pu_location_id", low_id, high_id) | _out_of_range(
@@ -63,15 +71,7 @@ RULES: dict[str, Callable[[Month], Column]] = {
         _out_of_range("trip_distance", 0, MAX_TRIP_DISTANCE_MILES) | F.isnan("trip_distance")
     ),
     # Negative Beträge sind Stornos oder Korrekturbuchungen, keine Fahrten.
-    # Spark ordnet NaN über jede Zahl, `< 0` greift also nicht.
-    "amount_invalid": lambda _: (
-        F.col("fare_amount").isNull()
-        | F.col("total_amount").isNull()
-        | F.isnan("fare_amount")
-        | F.isnan("total_amount")
-        | (F.col("fare_amount") < 0)
-        | (F.col("total_amount") < 0)
-    ),
+    "amount_invalid": _amount_invalid,
     "location_invalid": _location_invalid,
     # passenger_count fehlt in der Quelle häufig (Eingabe am Taxameter) und bleibt dann null.
     "passenger_count_invalid": lambda _: (
