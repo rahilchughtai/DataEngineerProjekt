@@ -36,7 +36,7 @@ chmod 600 "$CONFIG"
 exec weed server \
   -dir=/data \
   -master.volumeSizeLimitMB=1024 \
-  -volume.max=0 \
+  -volume.max=100 \
   -s3 \
   -s3.port=8333 \
   -s3.config="$CONFIG"

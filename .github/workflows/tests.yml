@@ -7,10 +7,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  COMPOSE_CMD: docker compose
+  UV_VERSION: "0.12.10" # wie in services/ingestion/Dockerfile
+
 jobs:
   unit-tests:
     name: unit-tests (${{ matrix.service }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -31,7 +40,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          version: "0.12.10" # wie im Dockerfile
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: services/${{ matrix.service }}/uv.lock
 
@@ -39,85 +48,84 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest
 
-  # Ruff mit der zentralen Konfiguration aus pyproject.toml; die pre-commit-Hooks lassen sich
-  # lokal umgehen. Ohne --fix, damit Abweichungen den Check scheitern lassen.
+  # Alle pre-commit-Hooks (inkl. Ruff mit der zentralen Konfiguration aus pyproject.toml), weil
+  # sie sich lokal umgehen lassen. Ändert ein Hook eine Datei (z. B. ruff --fix), scheitert der
+  # Lauf; --show-diff-on-failure zeigt die nötige Änderung im Log.
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
       - uses: astral-sh/setup-uv@v7
         with:
-          version: "0.12.10"
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - run: uv sync --frozen
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
+      # Hook-Umgebungen, damit pre-commit sie nicht bei jedem Lauf neu installiert.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
-  # Synthetischer End-to-End-Lauf mit den echten Images, SeaweedFS und dem Spark-Cluster, ohne
-  # TLC-Download. Prüft Startreihenfolge über depends_on bei compose run, Zugangsdaten, S3A,
-  # Wiederholung und einen fehlenden Monat. Bewusst kein Pflicht-Check (nicht in tests-passed):
-  # Er dauert einige Minuten und hängt von Docker Hub und Maven Central ab. Podman deckt er nicht ab.
-  smoke:
+      - run: uv sync --frozen
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
+
+  # End-to-End-Lauf über den echten Orchestrator mit den echten Images, SeaweedFS und dem
+  # Spark-Cluster. Ingestion lädt gekürzte echte TLC-Dateien (tests/e2e/fixtures) von einem
+  # Mock-Server statt von CloudFront. Prüft Ingestion, Job 1 und Job 2 über ein Quartal, die
+  # Wiederholung (idempotent), ein nicht veröffentlichtes Quartal (403 → Exit-Code 3),
+  # Zugriffsrechte und die Run-ID über alle Schichten. Podman deckt er nicht ab.
+  e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: tests/e2e
+    env:
+      # Stack nach pytest stehen lassen, damit die Logs bei einem Fehler noch abrufbar sind.
+      E2E_KEEP: "1"
+      COMPOSE_FILE: ${{ github.workspace }}/docker-compose.yml:${{ github.workspace }}/tests/e2e/compose.e2e.yml
+      COMPOSE_ENV_FILES: ${{ github.workspace }}/.env,${{ github.workspace }}/tests/e2e/e2e.env
     steps:
       - uses: actions/checkout@v5
 
       - uses: astral-sh/setup-uv@v7
         with:
-          version: "0.12.10"
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: |
+            tests/e2e/uv.lock
+            services/orchestrator/uv.lock
 
       - name: .env aus dem Beispiel
-        run: cp .env.example .env
+        run: cp ../../.env.example ../../.env
 
-      - run: docker compose --profile jobs build
-
-      # Startet SeaweedFS über depends_on und wartet auf dessen Healthcheck.
-      - name: Data Lake und Buckets
-        run: docker compose run --rm lake-init
-
-      - name: Synthetische Bronze-Daten für 2024-01
-        run: uv run --no-project --with pyarrow --with boto3 python .github/scripts/smoke_lake.py seed
-
-      - name: Job 1 und Job 2, zweimal (idempotent)
-        run: |
-          for attempt in 1 2; do
-            echo "::group::Durchlauf $attempt"
-            docker compose run --rm silver-job --month 2024-01
-            docker compose run --rm gold-job --month 2024-01
-            uv run --no-project --with boto3 python .github/scripts/smoke_lake.py check
-            echo "::endgroup::"
-          done
-
-      - name: Fehlender Silver-Monat endet mit Exit-Code 3
-        run: |
-          set +e
-          docker compose run --rm gold-job --month 2024-02
-          code=$?
-          echo "exit code: $code"
-          test "$code" -eq 3
+      - run: uv sync --frozen
+      # -s zeigt Build- und Job-Ausgaben sofort; bei einem Abbruch durch timeout-minutes gingen
+      # von pytest gepufferte Ausgaben sonst verloren.
+      - run: uv run pytest -v -s --durations=5
 
       - name: Logs
-        if: failure()
-        run: docker compose --profile jobs logs --no-color
+        if: failure() || cancelled()
+        run: $COMPOSE_CMD --profile jobs logs --no-color
 
       - name: Aufräumen
         if: always()
-        run: docker compose --profile jobs down --volumes
+        run: $COMPOSE_CMD --profile jobs down --volumes --remove-orphans
 
-  # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit.
+  # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit,
+  # neue Jobs genügt es in needs einzutragen.
   # always(), weil GitHub einen übersprungenen Pflicht-Check als bestanden wertet.
   tests-passed:
-    needs: [unit-tests, lint]
+    needs: [unit-tests, lint, e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Alle Unit-Tests und Lint erfolgreich
+      - name: Alle Jobs aus needs erfolgreich
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "unit-tests: ${{ needs.unit-tests.result }}"
-          echo "lint: ${{ needs.lint.result }}"
-          test "${{ needs.unit-tests.result }}" = "success"
-          test "${{ needs.lint.result }}" = "success"
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          jq -e 'all(.[]; .result == "success")' <<< "$NEEDS" > /dev/null

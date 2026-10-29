@@ -48,7 +48,7 @@ cp .env.example .env        # Beispielwerte reichen für eine lokale Demo, sonst
 uv run --project services/orchestrator orchestrator --quarter 2024Q1
 ```
 
-Der [Orchestrator](services/orchestrator/README.md) baut die Images und führt Ingestion, Spark-Job 1 (`silver-job`) und Spark-Job 2 (`gold-job`) nacheinander für das angegebene Quartal aus. Er startet die benötigte Infrastruktur über Compose, bricht beim ersten Fehler ab und schreibt einen Laufbericht nach `runs/`. Standard ist `docker compose`; mit Podman `COMPOSE_CMD="podman compose"` setzen oder `--compose "podman compose"` übergeben. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar.
+Der [Orchestrator](services/orchestrator/README.md) baut die Images und führt Ingestion, Spark-Job 1 (`silver-job`) und Spark-Job 2 (`gold-job`) nacheinander für das angegebene Quartal aus. Er startet die benötigte Infrastruktur über Compose, bricht beim ersten Fehler ab und schreibt einen Laufbericht nach `runs/`. Den Compose-Befehl der eigenen Container-Engine gibt man über `COMPOSE_CMD` oder `--compose` an, z. B. `COMPOSE_CMD="podman compose"`. Einen Standardwert gibt es nicht. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar.
 
 Compose definiert die Container, nicht den Ablauf: `compose up` startet nur SeaweedFS, `lake-init` und den Spark-Cluster (Master und zwei Worker). Die drei Datenjobs liegen im Profil `jobs`, hängen nur von dieser Infrastruktur ab und lassen sich einzeln starten; Silver braucht bereits geladene Bronze-Daten, Gold bereits erzeugte Silver-Daten:
 
@@ -94,7 +94,7 @@ Die Pipeline ist für einen lokalen Einzelbetrieb ausgelegt. Bewusst nicht umges
 - **Ein Lauf zur Zeit.** Parallele Läufe für überlappende Zeiträume werden nicht verhindert und überschreiben dieselben Partitionen. Run-IDs sind eindeutig, Reports kollidieren also nicht.
 - **Leere Monate gelten als Fehler.** Hat ein Monat keine einzige gültige Fahrt, endet Job 1 mit `failed` und lässt den bisherigen Stand stehen. Eine Schwelle für den Anteil abgelehnter Zeilen gibt es nicht.
 - **Beispielschlüssel.** Die Werte aus `.env.example` reichen für eine lokale Demo. Für jeden anderen Betrieb müssen sie durch eigene Zufallswerte ersetzt werden.
-- **Podman nicht in CI.** Der Smoke-Test in CI läuft mit Docker; Podman ist nur lokal getestet.
+- **Podman nicht in CI.** Der End-to-End-Test in CI läuft mit Docker; Podman ist nur lokal getestet.
 
 ## Entwicklung
 
@@ -104,6 +104,7 @@ uv run pre-commit install                 # Hooks für jeden Commit
 uv run ruff format . && uv run ruff check .
 uv sync --directory services/ingestion    # Umgebung eines Service, z. B. für die IDE
 uv run --directory services/ingestion pytest   # Unit-Tests eines Service
+uv run --directory tests/e2e pytest -v    # End-to-End-Test (Docker; normale Umgebung vorher stoppen)
 ```
 
 Die Spark-Tests brauchen Java 17; unter Windows laufen sie im Spark-Image (Befehl in [services/spark/README.md](services/spark/README.md#tests)).
@@ -112,6 +113,6 @@ Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.
 
 - `unit-tests`: die Unit-Tests, ein Matrix-Job pro Service.
 - `lint`: `ruff check` und `ruff format --check`.
-- `smoke`: ein optionaler End-to-End-Test mit den echten Images, SeaweedFS und dem Spark-Cluster. Er nutzt synthetische Daten ([smoke_lake.py](.github/scripts/smoke_lake.py)), lässt beide Jobs zweimal laufen und prüft einen fehlenden Monat.
+- `e2e`: der [End-to-End-Test](tests/e2e/README.md). Er ruft den echten Orchestrator auf, der die echten Images, SeaweedFS und den Spark-Cluster startet; die Ingestion lädt gekürzte echte TLC-Dateien aus dem Repository von einem Mock-Server. Geprüft werden ein Quartal durch alle Schichten, die Wiederholung, ein nicht veröffentlichtes Quartal und die Zugriffsrechte.
 
-Der abschließende Job `tests-passed` ist nur grün, wenn Unit-Tests und Lint erfolgreich waren; er ist der Pflicht-Check für Merges nach `develop`. Der Smoke-Test zählt bewusst nicht dazu.
+Der abschließende Job `tests-passed` ist nur grün, wenn Unit-Tests, Lint und der End-to-End-Test erfolgreich waren; er ist der Pflicht-Check für Merges nach `develop`. Weil der End-to-End-Test die Images baut, blockiert ein Ausfall von Docker Hub oder Maven Central auch den Merge.

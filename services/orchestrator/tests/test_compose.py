@@ -7,8 +7,6 @@ from typing import Any
 
 import pytest
 
-from orchestrator.cli import DEFAULT_COMPOSE
-
 ROOT = Path(__file__).resolve().parents[3]
 JOBS = {"ingestion", "silver-job", "gold-job"}
 INFRASTRUCTURE = {"seaweedfs", "lake-init", "spark-master", "spark-worker"}
@@ -16,9 +14,9 @@ INFRASTRUCTURE = {"seaweedfs", "lake-init", "spark-master", "spark-worker"}
 
 @pytest.fixture(scope="module")
 def compose() -> list[str]:
-    command = (os.environ.get("COMPOSE_CMD") or DEFAULT_COMPOSE).split()
-    if not shutil.which(command[0]):
-        message = f"Compose-Konfigurationstests brauchen {command[0]} (COMPOSE_CMD)"
+    command = os.environ.get("COMPOSE_CMD", "").split()
+    if not command or not shutil.which(command[0]):
+        message = "Compose-Konfigurationstests brauchen einen Compose-Befehl in COMPOSE_CMD"
         # In CI (GitHub setzt CI=true) wäre ein stilles Überspringen eine Lücke.
         if os.environ.get("CI"):
             pytest.fail(message)

@@ -6,11 +6,11 @@ REQUIRED = {
     "S3_ENDPOINT": "http://seaweedfs:8333",
     "S3_INGESTION_ACCESS_KEY": "key",
     "S3_INGESTION_SECRET_KEY": "secret",
+    "TLC_BASE_URL": "https://tlc.test/trip-data",
 }
 OPTIONAL = [
     "S3_REGION",
     "BRONZE_BUCKET",
-    "TLC_BASE_URL",
     "TLC_DATASET",
     "DOWNLOAD_MAX_ATTEMPTS",
     "DOWNLOAD_BACKOFF_SECONDS",

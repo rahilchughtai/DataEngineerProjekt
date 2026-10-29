@@ -26,7 +26,7 @@ Für einen vollständigen Pipeline-Lauf im Repo-Root den [Orchestrator](../orche
 | `S3_INGESTION_ACCESS_KEY` / `S3_INGESTION_SECRET_KEY` | – | eigene Identität, darf nur `bronze` |
 | `BRONZE_BUCKET` | `bronze` | Ziel-Bucket |
 | `INGEST_PERIOD` | – | Zeitraum (`YYYYQn` oder `YYYY-MM`), wenn kein `--quarter`/`--month` übergeben wird |
-| `TLC_BASE_URL` | CloudFront-URL der TLC | Quelle |
+| `TLC_BASE_URL` | – | Quelle der Monatsdateien, aus `.env` (siehe `.env.example`) |
 | `TLC_DATASET` | `yellow_tripdata` | Dateipräfix; in Compose fest, weil Spark-Job 1 nur das Yellow-Schema kennt |
 | `DOWNLOAD_MAX_ATTEMPTS` | `5` | Versuche pro Anfrage |
 | `DOWNLOAD_BACKOFF_SECONDS` | `2` | Basis des exponentiellen Backoffs |

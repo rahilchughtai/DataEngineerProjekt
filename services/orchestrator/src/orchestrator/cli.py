@@ -24,7 +24,6 @@ INCOMPLETE = 3
 # Wie GNU timeout: Der Schritt wurde nach Ablauf der Frist abgebrochen.
 TIMEOUT = 124
 
-DEFAULT_COMPOSE = "docker compose"
 DEFAULT_STEP_TIMEOUT = 20 * 60
 # So lange darf sich der Compose-Client nach SIGTERM beenden, bevor er SIGKILL bekommt.
 TERMINATE_GRACE_SECONDS = 30
@@ -39,8 +38,6 @@ Runner = Callable[[list[str]], int]
 class Step:
     name: str
     command: list[str]
-    # Entfernt den Job-Container, falls er den abgebrochenen Compose-Client überlebt.
-    cleanup: list[str] | None = None
 
 
 def _setup_logging() -> None:
@@ -74,8 +71,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--compose",
         type=str.split,
-        default=(os.environ.get("COMPOSE_CMD") or DEFAULT_COMPOSE).split(),
-        help=f"Compose-Befehl (Standard: COMPOSE_CMD, sonst {DEFAULT_COMPOSE!r})",
+        default=os.environ.get("COMPOSE_CMD", "").split(),
+        help="Compose-Befehl, Pflicht (Standard: Umgebungsvariable COMPOSE_CMD)",
     )
     parser.add_argument(
         "--report-dir",
@@ -90,7 +87,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="SECONDS",
         help=f"Frist je Schritt in Sekunden, 0 = keine (Standard: {DEFAULT_STEP_TIMEOUT})",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if not args.compose:
+        parser.error("kein Compose-Befehl: --compose oder COMPOSE_CMD angeben")
+    return args
 
 
 def _non_negative_seconds(value: str) -> int:
@@ -108,34 +108,15 @@ def new_run_id() -> str:
     return f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
 
 
-def container_engine(compose: list[str]) -> str:
-    return "podman" if "podman" in compose[0] else "docker"
-
-
 def build_steps(compose: list[str], quarter: str, run_id: str) -> list[Step]:
-    period = ["--quarter", quarter]
-    engine = container_engine(compose)
-    steps = [Step("build", [*compose, "--profile", "jobs", "build"])]
-    for job in ("ingestion", "silver-job", "gold-job"):
-        container = f"taxi-pipeline-{job}-{run_id}"
-        steps.append(
-            Step(
-                job,
-                [
-                    *compose,
-                    "run",
-                    "--rm",
-                    "--name",
-                    container,
-                    "-e",
-                    f"{RUN_ID_ENV}={run_id}",
-                    job,
-                    *period,
-                ],
-                cleanup=[engine, "rm", "--force", container],
-            )
-        )
-    return steps
+    run = [*compose, "run", "--rm", "-e", f"{RUN_ID_ENV}={run_id}"]
+    return [
+        Step("build", [*compose, "--profile", "jobs", "build"]),
+        *(
+            Step(job, [*run, job, "--quarter", quarter])
+            for job in ("ingestion", "silver-job", "gold-job")
+        ),
+    ]
 
 
 def run_command(command: list[str], timeout: float | None = None) -> int:
@@ -153,20 +134,6 @@ def run_command(command: list[str], timeout: float | None = None) -> int:
         raise
 
 
-def _cleanup(step: Step, runner: Runner) -> str:
-    if step.cleanup is None:
-        return "not_needed"
-    log.info("step=%s cleanup=%s", step.name, " ".join(step.cleanup))
-    try:
-        code = runner(step.cleanup)
-    except (OSError, subprocess.TimeoutExpired) as err:
-        log.error("step=%s cleanup failed: %s", step.name, err)
-        return "failed"
-    # Ohne Container (schon mit --rm entfernt) melden docker und podman einen Fehler; das ist
-    # hier das gewünschte Ergebnis und kein Problem.
-    return "ok" if code == 0 else f"exit_code={code}"
-
-
 def run_steps(steps: list[Step], runner: Runner) -> list[dict[str, Any]]:
     """Führt die Schritte nacheinander aus und bricht beim ersten Fehler ab."""
     results: list[dict[str, Any]] = []
@@ -174,7 +141,6 @@ def run_steps(steps: list[Step], runner: Runner) -> list[dict[str, Any]]:
         log.info("step=%s command=%s", step.name, " ".join(step.command))
         started_at = datetime.now(UTC).isoformat(timespec="seconds")
         started = time.monotonic()
-        extra: dict[str, Any] = {}
         try:
             code = runner(step.command)
             status = "ok" if code == 0 else "failed"
@@ -186,7 +152,6 @@ def run_steps(steps: list[Step], runner: Runner) -> list[dict[str, Any]]:
                 "step=%s Frist von %s s überschritten, Schritt abgebrochen", step.name, err.timeout
             )
             code, status = TIMEOUT, "timeout"
-            extra["cleanup"] = _cleanup(step, runner)
         seconds = round(time.monotonic() - started, 2)
         level = logging.INFO if code == 0 else logging.ERROR
         log.log(
@@ -200,7 +165,6 @@ def run_steps(steps: list[Step], runner: Runner) -> list[dict[str, Any]]:
                 "started_at": started_at,
                 "seconds": seconds,
             }
-            | extra
         )
         if code != 0:
             break
