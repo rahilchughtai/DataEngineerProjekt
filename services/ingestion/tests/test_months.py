@@ -1,6 +1,6 @@
 import pytest
 
-from ingestion.months import Month, parse_month, parse_period, quarter_months
+from ingestion.months import Month, months_from_env, parse_month, parse_period, quarter_months
 
 
 def test_parse_month() -> None:
@@ -54,3 +54,32 @@ def test_parse_period_month() -> None:
 def test_parse_period_rejects_invalid(value: str) -> None:
     with pytest.raises(ValueError):
         parse_period(value)
+
+
+@pytest.mark.parametrize(
+    ("period", "expected"),
+    [
+        ("2024Q2", [Month(2024, 4), Month(2024, 5), Month(2024, 6)]),
+        (" 2024-01 ", [Month(2024, 1)]),
+    ],
+)
+def test_months_from_env(
+    monkeypatch: pytest.MonkeyPatch, period: str, expected: list[Month]
+) -> None:
+    monkeypatch.setenv("INGEST_PERIOD", period)
+    assert months_from_env() == expected
+
+
+def test_invalid_period_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INGEST_PERIOD", "2024/01")
+    with pytest.raises(ValueError, match="YYYYQn oder YYYY-MM"):
+        months_from_env()
+
+
+@pytest.mark.parametrize("value", [None, "", "  "])
+def test_period_is_required(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
+    monkeypatch.delenv("INGEST_PERIOD", raising=False)
+    if value is not None:
+        monkeypatch.setenv("INGEST_PERIOD", value)
+    with pytest.raises(ValueError, match="Kein Zeitraum"):
+        months_from_env()

@@ -51,3 +51,23 @@ def test_quarter_months_matches_ingestion(ingestion_months: ModuleType, value: s
 )
 def test_parse_period_matches_ingestion(ingestion_months: ModuleType, value: str) -> None:
     assert outcome(periods.parse_period, value) == outcome(ingestion_months.parse_period, value)
+
+
+@pytest.mark.parametrize(
+    ("period", "expected"),
+    [("2024Q1", "2024-01,2024-02,2024-03"), ("2024-03", "2024-03")],
+)
+def test_period_from_environment(
+    monkeypatch: pytest.MonkeyPatch, period: str, expected: str
+) -> None:
+    monkeypatch.setenv("INGEST_PERIOD", period)
+    assert ",".join(map(str, periods.months_from_env())) == expected
+
+
+@pytest.mark.parametrize("value", ["2024Q1", "2024-03", "2024/01", ""])
+def test_months_from_env_matches_ingestion(
+    monkeypatch: pytest.MonkeyPatch, ingestion_months: ModuleType, value: str
+) -> None:
+    monkeypatch.setenv("INGEST_PERIOD", value)
+    expected = outcome(lambda _: ingestion_months.months_from_env(), value)
+    assert outcome(lambda _: periods.months_from_env(), value) == expected

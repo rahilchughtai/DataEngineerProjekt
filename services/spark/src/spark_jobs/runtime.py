@@ -3,31 +3,29 @@
 import logging
 import os
 import re
-import secrets
 import sys
-from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("runtime")
 
 
-RUN_ID_ENV = "PIPELINE_RUN_ID"
+RUN_ID_FILE_ENV = "PIPELINE_RUN_ID_FILE"
 RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
 
 
-def new_run_id() -> str:
-    """Nach Startzeit sortierbar; der Zufallsteil trennt Läufe, die in derselben Sekunde starten."""
-    return f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
-
-
-def resolve_run_id() -> str:
-    """Run-ID des Orchestrators aus PIPELINE_RUN_ID, bei Einzelaufruf eine neue."""
-    run_id = os.environ.get(RUN_ID_ENV, "").strip()
-    if not run_id:
-        return new_run_id()
+def read_run_id() -> str:
+    """Run-ID des Laufs aus der Datei, die run-init schreibt (PIPELINE_RUN_ID_FILE)."""
+    path = os.environ.get(RUN_ID_FILE_ENV, "").strip()
+    if not path:
+        raise ValueError(f"Umgebungsvariable {RUN_ID_FILE_ENV} fehlt (Run-ID von run-init)")
+    try:
+        run_id = Path(path).read_text(encoding="utf-8").strip()
+    except OSError as err:
+        raise ValueError(f"{RUN_ID_FILE_ENV}: {path} nicht lesbar ({err})") from err
     if not RUN_ID_PATTERN.fullmatch(run_id):
         raise ValueError(
-            f"Ungültige {RUN_ID_ENV} {run_id!r}, erwartet YYYYMMDDTHHMMSSZ-xxxxxx (hex)"
+            f"Ungültige Run-ID {run_id!r} in {path}, erwartet YYYYMMDDTHHMMSSZ-xxxxxx (hex)"
         )
     return run_id
 

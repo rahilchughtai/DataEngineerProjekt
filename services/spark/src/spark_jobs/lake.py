@@ -32,6 +32,9 @@ class LakePaths:
     def bronze_month(self, month: Month) -> str:
         return f"{self.bronze}/{self.dataset}/{partition(month)}"
 
+    def bronze_run_report(self, run_id: str) -> str:
+        return f"{self.bronze}/_runs/{self.dataset}/{run_id}.json"
+
     def silver_table(self) -> str:
         return f"{self.silver}/{self.dataset}"
 
@@ -49,6 +52,9 @@ class LakePaths:
 
     def gold_run_report(self, run_id: str) -> str:
         return f"{self.gold}/_runs/{self.dataset}/{run_id}.json"
+
+    def pipeline_report(self, run_id: str) -> str:
+        return f"{self.gold}/_runs/pipeline/{run_id}.json"
 
 
 def partition(month: Month) -> str:
@@ -69,6 +75,16 @@ def exists(spark: SparkSession, path: str) -> bool:
 def delete(spark: SparkSession, path: str) -> None:
     fs, hadoop_path = _fs(spark, path)
     fs.delete(hadoop_path, True)
+
+
+def read_text(spark: SparkSession, path: str) -> str:
+    fs, hadoop_path = _fs(spark, path)
+    io_utils = spark.sparkContext._jvm.org.apache.commons.io.IOUtils
+    stream = fs.open(hadoop_path)
+    try:
+        return bytes(io_utils.toByteArray(stream)).decode()
+    finally:
+        stream.close()
 
 
 def write_text(spark: SparkSession, path: str, text: str) -> None:

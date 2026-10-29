@@ -1,5 +1,6 @@
 """Auflösung der zu ladenden Monate (einzeln oder Quartal)."""
 
+import os
 import re
 from dataclasses import dataclass
 
@@ -43,3 +44,15 @@ def parse_period(value: str) -> list[Month]:
     if _MONTH_RE.match(value.strip()):
         return [parse_month(value)]
     raise ValueError(f"Zeitraum muss YYYYQn oder YYYY-MM sein, nicht {value!r}")
+
+
+def period_from_env() -> str:
+    """Zeitraum des Laufs aus INGEST_PERIOD, wie ihn Compose aus .env setzt."""
+    period = os.environ.get("INGEST_PERIOD", "").strip()
+    if not period:
+        raise ValueError("Kein Zeitraum angegeben (INGEST_PERIOD, siehe .env.example)")
+    return period
+
+
+def months_from_env() -> list[Month]:
+    return parse_period(period_from_env())

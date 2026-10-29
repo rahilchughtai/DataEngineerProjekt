@@ -1,3 +1,6 @@
+# docker compose up führt einen vollständigen Lauf für INGEST_PERIOD aus (.env). Die Reihenfolge
+# legen allein die depends_on-Bedingungen fest: run-init und lake-init → ingestion → silver-job →
+# gold-job → run-report. SeaweedFS und der Spark-Cluster laufen danach weiter.
 name: taxi-pipeline
 
 x-logging: &default-logging
@@ -17,16 +20,26 @@ x-spark-job-env: &spark-job-env
   S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
   S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
   SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+  BRONZE_BUCKET: bronze
+  SILVER_BUCKET: silver
+  GOLD_BUCKET: gold
   TLC_DATASET: yellow_tripdata
-  INGEST_PERIOD: ${INGEST_PERIOD:-}
+  INGEST_PERIOD: ${INGEST_PERIOD:?siehe .env.example}
+  PIPELINE_RUN_ID_FILE: /run/pipeline/run-id
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
-# Spark-Jobs als One-Shot-Container (Driver im Client-Modus).
+# Spark-Jobs als One-Shot-Container (Driver im Client-Modus). restart "no": Ein Fehler oder ein
+# unvollständiger Zeitraum (Exit-Code 3) hält die Kette an, statt den Job endlos zu wiederholen.
+# pull_policy never hier und bei allen Services ohne build: Ihr Image baut ein anderer Service
+# (spark-master, seaweedfs), in keiner Registry liegt es.
 x-spark-job: &spark-job
   image: localhost/taxi-pipeline/spark:0.1.0
-  profiles: [jobs]
+  pull_policy: never
   command: []
+  volumes:
+    - pipeline-run:/run/pipeline:ro
   networks: [sparknet, lakenet]
+  restart: "no"
   logging: *default-logging
 
 services:
@@ -57,6 +70,7 @@ services:
 
   lake-init:
     image: localhost/taxi-pipeline/seaweedfs:0.1.0
+    pull_policy: never
     entrypoint: ["/usr/local/bin/init-buckets.sh"]
     environment:
       SEAWEEDFS_MASTER: seaweedfs:9333
@@ -65,10 +79,26 @@ services:
       seaweedfs:
         condition: service_healthy
     networks: [lakenet]
+    restart: "no"
+    logging: *default-logging
+
+  # Erzeugt die Run-ID des Laufs, YYYYMMDDTHHMMSSZ-xxxxxx: Startzeit UTC plus 6 Hex-Zeichen. Alle
+  # Schritte lesen sie aus dem Volume, damit Reports und _run_id eines Laufs zusammenpassen.
+  run-init:
+    image: localhost/taxi-pipeline/seaweedfs:0.1.0
+    pull_policy: never
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        echo "$$(date -u +%Y%m%dT%H%M%SZ)-$$(od -An -N3 -tx1 /dev/urandom | tr -dc 0-9a-f)"
+        > /run/pipeline/run-id && cat /run/pipeline/run-id
+    volumes:
+      - pipeline-run:/run/pipeline
+    network_mode: none
+    restart: "no"
     logging: *default-logging
 
   ingestion:
-    profiles: [jobs]
     build:
       context: ./services/ingestion
     image: localhost/taxi-pipeline/ingestion:0.1.0
@@ -80,12 +110,18 @@ services:
       BRONZE_BUCKET: bronze
       TLC_BASE_URL: ${TLC_BASE_URL:?siehe .env.example}
       TLC_DATASET: yellow_tripdata
-      INGEST_PERIOD: ${INGEST_PERIOD:-}
+      INGEST_PERIOD: ${INGEST_PERIOD:?siehe .env.example}
+      PIPELINE_RUN_ID_FILE: /run/pipeline/run-id
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - pipeline-run:/run/pipeline:ro
     depends_on:
       lake-init:
         condition: service_completed_successfully
+      run-init:
+        condition: service_completed_successfully
     networks: [lakenet]
+    restart: "no"
     logging: *default-logging
 
   spark-master:
@@ -113,6 +149,7 @@ services:
 
   spark-worker:
     image: localhost/taxi-pipeline/spark:0.1.0
+    pull_policy: never
     command: ["/usr/local/bin/start-worker.sh"]
     # Keine S3-Zugangsdaten: die Executors erhalten sie über die Konfiguration des Jobs.
     environment:
@@ -131,37 +168,48 @@ services:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8081"]
     logging: *default-logging
 
-  # Job 1: Bronze nach Silver; Bronze-Daten müssen bereits vorliegen.
+  # Job 1: Bronze nach Silver mit Qualitätsprüfungen und Quarantäne.
   silver-job:
     <<: *spark-job
     entrypoint:
       - /usr/local/bin/submit-job.sh
       - /opt/spark-jobs/spark_jobs/bronze_to_silver.py
-    environment:
-      <<: *spark-job-env
-      BRONZE_BUCKET: bronze
-      SILVER_BUCKET: silver
+    environment: *spark-job-env
     depends_on:
-      lake-init:
+      ingestion:
         condition: service_completed_successfully
       spark-worker:
         condition: service_healthy
 
-  # Job 2: stündliche Nachfrage je Zone aus Silver nach Gold, Einzelläufe wie beim silver-job.
+  # Job 2: stündliche Nachfrage je Zone aus Silver nach Gold.
   gold-job:
     <<: *spark-job
     entrypoint:
       - /usr/local/bin/submit-job.sh
       - /opt/spark-jobs/spark_jobs/silver_to_gold.py
-    environment:
-      <<: *spark-job-env
-      SILVER_BUCKET: silver
-      GOLD_BUCKET: gold
+    environment: *spark-job-env
     depends_on:
-      lake-init:
+      silver-job:
         condition: service_completed_successfully
       spark-worker:
         condition: service_healthy
+
+  # Laufbericht über alle drei Schritte nach gold/_runs/pipeline/. Liest nur kleine JSON-Dateien,
+  # deshalb lokal im Container statt auf dem Cluster und nur im Speichernetz.
+  run-report:
+    <<: *spark-job
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+      - --master
+      - local[1]
+      - --conf
+      - spark.ui.enabled=false
+      - /opt/spark-jobs/spark_jobs/pipeline_report.py
+    environment: *spark-job-env
+    networks: [lakenet]
+    depends_on:
+      gold-job:
+        condition: service_completed_successfully
 
 networks:
   lakenet:
@@ -172,3 +220,6 @@ networks:
 volumes:
   seaweedfs-data:
     name: taxi-pipeline-seaweedfs-data
+  # Run-ID des laufenden Durchgangs, geschrieben von run-init.
+  pipeline-run:
+    name: taxi-pipeline-run
