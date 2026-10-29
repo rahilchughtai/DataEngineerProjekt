@@ -1,26 +1,16 @@
 """Zugriff auf die Bronze-Schicht im SeaweedFS-S3."""
 
 import json
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
 import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
-from tenacity import (
-    Retrying,
-    before_sleep_log,
-    retry_if_exception_type,
-    stop_after_delay,
-    wait_fixed,
-)
 
 from ingestion.config import Config
 from ingestion.download import DownloadResult, SourceInfo
 from ingestion.months import Month
-
-log = logging.getLogger(__name__)
 
 PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 
@@ -42,18 +32,6 @@ def make_client(cfg: Config) -> Any:
 def object_key(dataset: str, month: Month) -> str:
     """Deterministischer, nach Zeit partitionierter Key. Gleicher Monat → gleicher Key."""
     return f"{dataset}/year={month.year:04d}/month={month.month:02d}/{dataset}_{month}.parquet"
-
-
-def wait_for_bucket(client: Any, bucket: str, timeout_seconds: float = 120) -> None:
-    """Wartet, bis der Bucket erreichbar ist (falls der Compose-Provider depends_on ignoriert)."""
-    retrying = Retrying(
-        stop=stop_after_delay(timeout_seconds),
-        wait=wait_fixed(3),
-        retry=retry_if_exception_type(Exception),
-        before_sleep=before_sleep_log(log, logging.WARNING),
-        reraise=True,
-    )
-    retrying(client.head_bucket, Bucket=bucket)
 
 
 def stored_metadata(client: Any, bucket: str, key: str) -> dict[str, str] | None:

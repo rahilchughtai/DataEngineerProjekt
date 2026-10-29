@@ -1,6 +1,6 @@
 import pytest
 
-from ingestion.months import Month, month_range, parse_month, parse_period, quarter_months
+from ingestion.months import Month, parse_month, parse_period, quarter_months
 
 
 def test_parse_month() -> None:
@@ -20,24 +20,6 @@ def test_month_validates_range() -> None:
 
 def test_month_str_is_zero_padded() -> None:
     assert str(Month(2024, 1)) == "2024-01"
-
-
-def test_next_rolls_over_year() -> None:
-    assert Month(2023, 12).next() == Month(2024, 1)
-
-
-def test_month_range_across_year() -> None:
-    months = month_range(Month(2023, 11), Month(2024, 2))
-    assert [str(m) for m in months] == ["2023-11", "2023-12", "2024-01", "2024-02"]
-
-
-def test_month_range_single_month() -> None:
-    assert month_range(Month(2024, 5), Month(2024, 5)) == [Month(2024, 5)]
-
-
-def test_month_range_rejects_reversed() -> None:
-    with pytest.raises(ValueError):
-        month_range(Month(2024, 2), Month(2024, 1))
 
 
 @pytest.mark.parametrize(

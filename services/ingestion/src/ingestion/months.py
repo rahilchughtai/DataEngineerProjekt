@@ -1,4 +1,4 @@
-"""Auflösung der zu ladenden Monate (einzeln, Bereich oder Quartal)."""
+"""Auflösung der zu ladenden Monate (einzeln oder Quartal)."""
 
 import re
 from dataclasses import dataclass
@@ -19,11 +19,6 @@ class Month:
     def __str__(self) -> str:
         return f"{self.year:04d}-{self.month:02d}"
 
-    def next(self) -> "Month":
-        if self.month == 12:
-            return Month(self.year + 1, 1)
-        return Month(self.year, self.month + 1)
-
 
 def parse_month(value: str) -> Month:
     match = _MONTH_RE.match(value.strip())
@@ -32,22 +27,13 @@ def parse_month(value: str) -> Month:
     return Month(int(match[1]), int(match[2]))
 
 
-def month_range(start: Month, end: Month) -> list[Month]:
-    if end < start:
-        raise ValueError(f"Ende {end} liegt vor Start {start}")
-    months = [start]
-    while months[-1] < end:
-        months.append(months[-1].next())
-    return months
-
-
 def quarter_months(value: str) -> list[Month]:
     match = _QUARTER_RE.match(value.strip())
     if not match:
         raise ValueError(f"Quartal muss im Format YYYYQn angegeben werden, nicht {value!r}")
     year, quarter = int(match[1]), int(match[2])
-    first = Month(year, 3 * (quarter - 1) + 1)
-    return month_range(first, Month(year, first.month + 2))
+    first = 3 * (quarter - 1) + 1
+    return [Month(year, m) for m in range(first, first + 3)]
 
 
 def parse_period(value: str) -> list[Month]:

@@ -45,7 +45,7 @@ services:
       seaweedfs:
         condition: service_healthy
     networks: [lakenet]
-    restart: on-failure:3
+    restart: "no"
     logging: *default-logging
 
   ingestion:
@@ -66,7 +66,7 @@ services:
       lake-init:
         condition: service_completed_successfully
     networks: [lakenet]
-    restart: on-failure:2
+    restart: "no"
     logging: *default-logging
 
   spark-master:
@@ -133,9 +133,7 @@ services:
       S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
       BRONZE_BUCKET: bronze
       SILVER_BUCKET: silver
-      # submit-job.sh prüft, dass der Executor in einen Worker passt.
       SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
-      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
       TLC_DATASET: yellow_tripdata
       INGEST_PERIOD: ${INGEST_PERIOD:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -164,7 +162,6 @@ services:
       SILVER_BUCKET: silver
       GOLD_BUCKET: gold
       SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
-      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
       TLC_DATASET: yellow_tripdata
       INGEST_PERIOD: ${INGEST_PERIOD:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

@@ -111,7 +111,6 @@ def main(argv: list[str] | None = None) -> int:
     log.info("run=%s months=%s", run_id, ",".join(map(str, months)))
 
     s3 = storage.make_client(cfg)
-    storage.wait_for_bucket(s3, cfg.bronze_bucket)
 
     results: list[dict[str, Any]] = []
     started = time.monotonic()
