@@ -43,6 +43,15 @@ def quarter_months(value: str) -> list[Month]:
     return [Month(year, m) for m in range(first, first + 3)]
 
 
+def parse_period(value: str) -> list[Month]:
+    """Ein Quartal (YYYYQn) oder ein einzelner Monat (YYYY-MM)."""
+    if _QUARTER_RE.match(value.strip()):
+        return quarter_months(value)
+    if _MONTH_RE.match(value.strip()):
+        return [parse_month(value)]
+    raise ValueError(f"Zeitraum muss YYYYQn oder YYYY-MM sein, nicht {value!r}")
+
+
 def add_period_args(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--quarter", metavar="YYYYQn", help="alle Monate eines Quartals")
@@ -50,17 +59,12 @@ def add_period_args(parser: argparse.ArgumentParser) -> None:
 
 
 def resolve_months(args: argparse.Namespace) -> list[Month]:
-    """CLI-Argumente haben Vorrang, sonst INGEST_QUARTER bzw. INGEST_MONTH aus der Umgebung."""
+    """CLI-Argumente haben Vorrang, sonst INGEST_PERIOD aus der Umgebung."""
     if args.quarter:
         return quarter_months(args.quarter)
     if args.month:
         return [parse_month(args.month)]
-    quarter = os.environ.get("INGEST_QUARTER", "").strip()
-    month = os.environ.get("INGEST_MONTH", "").strip()
-    if quarter and month:
-        raise ValueError("INGEST_QUARTER und INGEST_MONTH sind beide gesetzt, bitte nur eine")
-    if quarter:
-        return quarter_months(quarter)
-    if month:
-        return [parse_month(month)]
-    raise ValueError("Kein Zeitraum angegeben (--quarter/--month oder INGEST_QUARTER/INGEST_MONTH)")
+    period = os.environ.get("INGEST_PERIOD", "").strip()
+    if not period:
+        raise ValueError("Kein Zeitraum angegeben (--quarter/--month oder INGEST_PERIOD)")
+    return parse_period(period)

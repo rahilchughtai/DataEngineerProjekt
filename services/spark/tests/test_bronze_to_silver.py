@@ -8,8 +8,8 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from spark_jobs import bronze_to_silver
-from spark_jobs.bronze_to_silver import exit_code, process_month, run
+from spark_jobs import lake
+from spark_jobs.bronze_to_silver import files_for, process_month, run
 from spark_jobs.lake import LakePaths
 from spark_jobs.periods import Month
 
@@ -21,7 +21,12 @@ RUN_ID = "20240401T000000Z"
 @pytest.fixture
 def paths(tmp_path: Path) -> LakePaths:
     root = tmp_path.as_uri()
-    return LakePaths(bronze=f"{root}/bronze", silver=f"{root}/silver", dataset="yellow_tripdata")
+    return LakePaths(
+        bronze=f"{root}/bronze",
+        silver=f"{root}/silver",
+        gold=f"{root}/gold",
+        dataset="yellow_tripdata",
+    )
 
 
 @pytest.fixture
@@ -66,6 +71,10 @@ def test_process_month_counts_and_writes(
 
     quarantine = spark.read.parquet(paths.quarantine_table()).collect()
     assert sorted(r["reject_reason"] for r in quarantine) == ["amount_invalid", "location_invalid"]
+
+    for table in (paths.silver_table(), paths.quarantine_table()):
+        partition = Path(table.removeprefix("file://")) / "year=2024" / "month=01"
+        assert len(list(partition.glob("*.parquet"))) == 1
 
 
 def test_rerun_is_idempotent(
@@ -176,14 +185,14 @@ def test_failure_between_writes_discards_month(
 ) -> None:
     put_bronze(JANUARY, january_sample(bronze))
     process_month(spark, JANUARY, paths, RUN_ID)
-    original = bronze_to_silver.write_partition
+    original = lake.write_partition
 
     def fail_on_quarantine(spark: SparkSession, df: DataFrame, table: str, *args: Any) -> None:
         if "_quarantine" in table:
             raise OSError("Schreibfehler")
         original(spark, df, table, *args)
 
-    monkeypatch.setattr(bronze_to_silver, "write_partition", fail_on_quarantine)
+    monkeypatch.setattr(lake, "write_partition", fail_on_quarantine)
 
     entry = process_month(spark, JANUARY, paths, "20240402T000000Z")
 
@@ -194,15 +203,7 @@ def test_failure_between_writes_discards_month(
 
 
 @pytest.mark.parametrize(
-    ("counts", "expected"),
-    [
-        ({"processed": 3}, 0),
-        ({"processed": 2, "missing": 1}, 3),
-        ({"missing": 3}, 3),
-        ({}, 3),
-        ({"processed": 2, "failed": 1}, 1),
-        ({"failed": 1}, 1),
-    ],
+    ("rows", "files"), [(0, 1), (1, 1), (1_000_000, 1), (1_000_001, 2), (3_523_771, 4)]
 )
-def test_exit_code(counts: dict[str, int], expected: int) -> None:
-    assert exit_code({"counts": counts}) == expected
+def test_files_for(rows: int, files: int) -> None:
+    assert files_for(rows) == files

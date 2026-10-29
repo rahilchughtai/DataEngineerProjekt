@@ -45,7 +45,7 @@ services:
       seaweedfs:
         condition: service_healthy
     networks: [lakenet]
-    restart: on-failure:3
+    restart: "no"
     logging: *default-logging
 
   ingestion:
@@ -54,24 +54,19 @@ services:
     image: localhost/taxi-pipeline/ingestion:0.1.0
     # Nur die eigene Identität: Least Privilege, kein Zugriff auf silver/gold.
     environment:
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
-      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ENDPOINT: http://seaweedfs:8333
       S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
       S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
       BRONZE_BUCKET: bronze
-      TLC_BASE_URL: ${TLC_BASE_URL:-https://d37ci6vzurychx.cloudfront.net/trip-data}
-      TLC_DATASET: ${TLC_DATASET:-yellow_tripdata}
-      INGEST_QUARTER: ${INGEST_QUARTER:-}
-      INGEST_MONTH: ${INGEST_MONTH:-}
-      DOWNLOAD_MAX_ATTEMPTS: ${DOWNLOAD_MAX_ATTEMPTS:-5}
-      DOWNLOAD_BACKOFF_SECONDS: ${DOWNLOAD_BACKOFF_SECONDS:-2}
-      DOWNLOAD_TIMEOUT_SECONDS: ${DOWNLOAD_TIMEOUT_SECONDS:-60}
+      TLC_BASE_URL: https://d37ci6vzurychx.cloudfront.net/trip-data
+      TLC_DATASET: yellow_tripdata
+      INGEST_PERIOD: ${INGEST_PERIOD:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       lake-init:
         condition: service_completed_successfully
     networks: [lakenet]
-    restart: on-failure:2
+    restart: "no"
     logging: *default-logging
 
   spark-master:
@@ -133,18 +128,14 @@ services:
       - /opt/spark-jobs/spark_jobs/bronze_to_silver.py
     command: []
     environment:
-      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
-      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ENDPOINT: http://seaweedfs:8333
       S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
       S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
       BRONZE_BUCKET: bronze
       SILVER_BUCKET: silver
-      # submit-job.sh prüft, dass der Executor in einen Worker passt.
       SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
-      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
-      TLC_DATASET: ${TLC_DATASET:-yellow_tripdata}
-      INGEST_QUARTER: ${INGEST_QUARTER:-}
-      INGEST_MONTH: ${INGEST_MONTH:-}
+      TLC_DATASET: yellow_tripdata
+      INGEST_PERIOD: ${INGEST_PERIOD:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
       ingestion:
@@ -153,6 +144,33 @@ services:
         condition: service_healthy
     networks: [sparknet, lakenet]
     # Kein on-failure: Compose würde auch Exit 2 (Konfiguration) und 3 (Bronze-Monat fehlt) wiederholen.
+    restart: "no"
+    logging: *default-logging
+
+  # Spark-Job 2: stündliche Nachfrage je Zone aus Silver nach Gold. Einzelläufe wie beim
+  # silver-job mit docker compose run --rm --no-deps gold-job --month 2024-01.
+  gold-job:
+    image: localhost/taxi-pipeline/spark:0.1.0
+    entrypoint:
+      - /usr/local/bin/submit-job.sh
+      - /opt/spark-jobs/spark_jobs/silver_to_gold.py
+    command: []
+    environment:
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+      SILVER_BUCKET: silver
+      GOLD_BUCKET: gold
+      SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+      TLC_DATASET: yellow_tripdata
+      INGEST_PERIOD: ${INGEST_PERIOD:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      silver-job:
+        condition: service_completed_successfully
+      spark-worker:
+        condition: service_healthy
+    networks: [sparknet, lakenet]
     restart: "no"
     logging: *default-logging
 

@@ -14,7 +14,7 @@ python -m ingestion --quarter 2024Q1
 python -m ingestion --month 2024-01 --force
 ```
 
-Ohne Argumente gelten `INGEST_QUARTER` bzw. `INGEST_MONTH`; sind beide gesetzt, bricht der Service mit Exit-Code `2` ab.
+Ohne Argumente gilt `INGEST_PERIOD` (Quartal `YYYYQn` oder Monat `YYYY-MM`); fehlt der Zeitraum oder ist er ungültig, bricht der Service mit Exit-Code `2` ab.
 
 ## Umgebungsvariablen
 
@@ -23,9 +23,12 @@ Ohne Argumente gelten `INGEST_QUARTER` bzw. `INGEST_MONTH`; sind beide gesetzt, 
 | `S3_ENDPOINT` | – | S3-Endpoint von SeaweedFS |
 | `S3_INGESTION_ACCESS_KEY` / `S3_INGESTION_SECRET_KEY` | – | eigene Identität, darf nur `bronze` |
 | `BRONZE_BUCKET` | `bronze` | Ziel-Bucket |
+| `INGEST_PERIOD` | – | Zeitraum (`YYYYQn` oder `YYYY-MM`), wenn kein `--quarter`/`--month` übergeben wird |
 | `TLC_BASE_URL` | CloudFront-URL der TLC | Quelle |
-| `TLC_DATASET` | `yellow_tripdata` | Dateipräfix |
+| `TLC_DATASET` | `yellow_tripdata` | Dateipräfix; in Compose fest, weil Spark-Job 1 nur das Yellow-Schema kennt |
 | `DOWNLOAD_MAX_ATTEMPTS` | `5` | Versuche pro Anfrage |
 | `DOWNLOAD_BACKOFF_SECONDS` | `2` | Basis des exponentiellen Backoffs |
 | `DOWNLOAD_TIMEOUT_SECONDS` | `60` | Timeout pro Anfrage |
 | `LOG_LEVEL` | `INFO` | Log-Level |
+
+Die `DOWNLOAD_*`-Werte reicht Compose nicht aus `.env` durch, es gelten die Standards. Für Experimente lassen sie sich per `docker compose run --rm -e DOWNLOAD_TIMEOUT_SECONDS=120 ingestion` setzen.

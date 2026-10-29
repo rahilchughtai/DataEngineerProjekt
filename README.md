@@ -32,6 +32,8 @@ Die editierbare Quelle des Diagramms liegt in [figures/architektur.drawio](figur
 - [uv](https://docs.astral.sh/uv/) für die lokale Entwicklung (Python 3.12).
 - Mindestens 8 GB RAM für Container: Master, zwei Worker mit je 2 GiB und der Driver des Spark-Jobs. Bei einer Podman-Machine mit Hyper-V oder unter macOS mit `podman machine set --memory 8192` erhöhen. Unter WSL teilt sich die Machine den Speicher mit Windows.
 
+Gemessen mit 2024Q1 (9,55 Mio. Fahrten): Im Data Lake liegen danach 160 MB Bronze, 203 MB Silver (inklusive Quarantäne) und 8,4 MB Gold. Ein erneuter Lauf desselben Quartals überschreibt die Partitionen und belegt keinen zusätzlichen Platz. Ohne Download braucht Job 1 12 bis 21 Sekunden je Monat, Job 2 6 bis 15 Sekunden. Bei weniger RAM lassen sich `SPARK_WORKER_MEMORY` und `SPARK_EXECUTOR_MEMORY` in `.env` senken.
+
 ## Start
 
 ```sh
@@ -39,13 +41,14 @@ cp .env.example .env        # danach alle change-me-Werte durch eigene Schlüsse
 podman compose up --build   # bzw. docker compose up --build
 ```
 
-Compose startet SeaweedFS und den Spark-Cluster (Master und zwei Worker) und legt über `lake-init` die Buckets `bronze`, `silver` und `gold` an. Danach führt es nacheinander und je einmal den Ingestion-Service und Spark-Job 1 (`silver-job`) für das in `INGEST_QUARTER` (oder `INGEST_MONTH`) angegebene Quartal bzw. den Monat aus. Die Reihenfolge sichert `depends_on` mit `service_completed_successfully` ab. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar. Einzelne Läufe lassen sich auch gezielt starten:
+Compose startet SeaweedFS und den Spark-Cluster (Master und zwei Worker) und legt über `lake-init` die Buckets `bronze`, `silver` und `gold` an. Danach führt es nacheinander und je einmal den Ingestion-Service, Spark-Job 1 (`silver-job`) und Spark-Job 2 (`gold-job`) für das in `INGEST_PERIOD` angegebene Quartal bzw. den Monat aus. Die Reihenfolge sichert `depends_on` mit `service_completed_successfully` ab. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar. Einzelne Läufe lassen sich auch gezielt starten:
 
 ```sh
 podman compose run --rm ingestion --quarter 2024Q1
 podman compose run --rm ingestion --month 2024-01 --force
 podman compose up -d spark-worker                          # Cluster für Einzelläufe
 podman compose run --rm --no-deps silver-job --month 2024-01
+podman compose run --rm --no-deps gold-job --month 2024-01
 podman compose up -d --scale spark-worker=3 spark-worker   # weitere Worker
 ```
 
@@ -57,7 +60,7 @@ Details zu Cluster, Qualitätsregeln und Reports: [services/spark/README.md](ser
 |---|---|---|---|
 | `bronze` | TLC-Dateien unverändert, `yellow_tripdata/year=YYYY/month=MM/…parquet`, Laufprotokolle unter `_runs/` | ingestion | ingestion, spark |
 | `silver` | bereinigte und validierte Fahrten `yellow_tripdata/year=YYYY/month=MM/`, abgelehnte Zeilen mit Grund unter `_quarantine/`, Qualitätsreports unter `_runs/` | spark | spark |
-| `gold` | aggregierte Features | spark | spark, ml_reader |
+| `gold` | stündliche Nachfrage je Pickup-Zone mit Kalendermerkmalen `yellow_tripdata/zone_hourly/year=YYYY/month=MM/`, Reports unter `_runs/` | spark | spark, ml_reader |
 
 Jeder Service bekommt in Compose nur die Zugangsdaten seiner eigenen Identität. Die Identitäten werden beim Start von SeaweedFS aus `.env` erzeugt ([seaweedfs/s3.json.template](seaweedfs/s3.json.template)). SeaweedFS 4.x verwirft die Identitäten ohne Signing-Key stillschweigend und läuft dann ohne Authentifizierung. Der Container startet deshalb nicht, wenn `SEAWEEDFS_SIGNING_KEY` fehlt oder kürzer als 32 Zeichen ist.
 

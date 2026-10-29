@@ -44,3 +44,10 @@ def test_parse_month_matches_ingestion(ingestion_months: ModuleType, value: str)
 )
 def test_quarter_months_matches_ingestion(ingestion_months: ModuleType, value: str) -> None:
     assert outcome(periods.quarter_months, value) == outcome(ingestion_months.quarter_months, value)
+
+
+@pytest.mark.parametrize(
+    "value", ["2024Q1", "2024-Q2", " 2024-03 ", "2024Q5", "2024-13", "2024/01", ""]
+)
+def test_parse_period_matches_ingestion(ingestion_months: ModuleType, value: str) -> None:
+    assert outcome(periods.parse_period, value) == outcome(ingestion_months.parse_period, value)

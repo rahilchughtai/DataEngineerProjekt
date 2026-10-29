@@ -19,7 +19,7 @@ MAX_PASSENGERS = 9
 LOCATION_ID_RANGE = (1, 265)
 
 
-def _month_bounds(month: Month) -> tuple[Column, Column]:
+def month_bounds(month: Month) -> tuple[Column, Column]:
     start = f"{month.year:04d}-{month.month:02d}-01 00:00:00"
     nxt = (
         f"{month.year + 1:04d}-01-01 00:00:00"
@@ -39,7 +39,7 @@ def _out_of_range(name: str, low: float, high: float) -> Column:
 
 
 def _pickup_outside_month(month: Month) -> Column:
-    start, end = _month_bounds(month)
+    start, end = month_bounds(month)
     pickup = F.col("pickup_datetime")
     return (pickup < start) | (pickup >= end)
 
