@@ -19,13 +19,15 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 6. **Schreiben**, partitioniert nach `year=YYYY/month=MM` wie in Bronze. `year` und `month` sind Strings; `spark.sql.sources.partitionColumnTypeInference.enabled=false` ([conf/spark-defaults.conf](conf/spark-defaults.conf)) verhindert, dass Spark sie beim Lesen zu Zahlen macht:
    - gültige Zeilen nach `s3a://silver/yellow_tripdata/`
    - abgelehnte Zeilen mit Grund nach `s3a://silver/_quarantine/yellow_tripdata/`
-   - Report pro Lauf nach `s3a://silver/_runs/yellow_tripdata/<run_id>.json`, mit `rows_in`, `rows_valid`, `rows_rejected`, `duplicates`, Ablehnungen je Regel und Laufzeit je Monat
+   - Report pro Lauf nach `s3a://silver/_runs/yellow_tripdata/<run_id>.json`, mit `rows_in`, `rows_valid`, `rows_rejected`, `duplicates`, Ablehnungen je Regel und Laufzeit je Monat. Die Run-ID hat die Form `YYYYMMDDTHHMMSSZ-xxxxxx`: nach Startzeit sortierbar, der Zufallsteil verhindert, dass zwei Läufe in derselben Sekunde ihre Reports überschreiben. Startet der Orchestrator den Job, übernimmt dieser dessen Run-ID aus `PIPELINE_RUN_ID`; ein ungültiger Wert beendet den Job mit Exit-Code `2`, bevor Spark startet. Ohne die Variable, etwa bei einem manuellen `compose run`, erzeugt der Job eine eigene Run-ID
 
 **Idempotenz:** `mode("overwrite")` mit `partitionOverwriteMode=dynamic` ersetzt nur die Partition des verarbeiteten Monats, alle anderen bleiben unverändert. Hat ein Monat beim erneuten Lauf keine abgelehnten Zeilen mehr, wird die alte Quarantäne-Partition gelöscht. Der Report rechnet sich auf: `rows_in = rows_valid + duplicates + rows_rejected`.
 
-**Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration, `3` wenn für mindestens einen Monat die Bronze-Daten fehlen (`missing`). Ein unvollständiges Quartal gilt nicht als Erfolg, sonst würden Gold und das Training still auf einem Teil der Monate weiterlaufen. Das Compose-Service hat `restart: "no"`, Wiederholungen übernimmt der Orchestrator. Schlägt das Schreiben eines Monats fehl, werden seine Silver- und Quarantäne-Partition gelöscht: Der Monat fehlt dann ganz, statt halb aktualisiert zu sein, bis ein erneuter Lauf ihn schreibt.
+**Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration, `3` wenn für mindestens einen Monat die Bronze-Daten fehlen (`missing`). Ein unvollständiges Quartal gilt nicht als Erfolg, sonst würden Gold und das Training still auf einem Teil der Monate weiterlaufen. Compose startet den Job nicht automatisch neu (Standard: `restart: "no"`); der Orchestrator bricht beim ersten Fehler ab. Schlägt das Schreiben eines Monats fehl, werden seine Silver- und Quarantäne-Partition gelöscht: Der Monat fehlt dann ganz, statt halb aktualisiert zu sein, bis ein erneuter Lauf ihn schreibt.
 
-**Umwandlungsfehler:** Spark 4 rechnet standardmäßig im ANSI-Modus, ein normaler `cast` bricht dort bei einem unpassenden Wert den ganzen Monat ab. Die Harmonisierung nutzt deshalb `try_cast`: Der Wert wird `null` und die Zeile von den Regeln unten abgelehnt.
+**Leere Monate:** Enthält die Bronze-Datei keine gültige Zeile (leer oder komplett abgelehnt), gilt der Monat als `failed` (Exit-Code `1`). Geschrieben wird dann nichts, Silver und Quarantäne behalten ihren bisherigen Stand; die Zähler stehen trotzdem im Report. Eine Schwelle für den Anteil abgelehnter Zeilen gibt es nicht, der Anteil lässt sich aus `rows_rejected` und `rows_in` im Report ablesen.
+
+**Umwandlungsfehler:** Spark 4 rechnet standardmäßig im ANSI-Modus, ein normaler `cast` bricht dort bei einem unpassenden Wert den ganzen Monat ab. Die Harmonisierung nutzt deshalb `try_cast`: Der Wert wird `null`. Ob die Zeile dann abgelehnt wird, entscheiden die Regeln unten. Bei Zeit, Zonen, Distanz und Beträgen ist `null` ein Ablehnungsgrund. `passenger_count` darf dagegen fehlen, und `payment_type` hat keine Regel; ein nicht umwandelbarer Wert bleibt dort als `null` in Silver und ist von einem in der Quelle fehlenden Wert nicht zu unterscheiden. Beide Spalten fließen nicht in Gold ein.
 
 **Schreibpfad:** S3A „benennt" beim Commit mit dem Standard-Committer per Kopieren und Löschen um. Auf SeaweedFS ist das langsamer als ein echtes Rename und nicht atomar. Die Laufzeit je Monat steht im Run-Report (`seconds`). Weil jede Datei einzeln kopiert wird, schreibt der Job je angefangene Million Zeilen eine Datei (knapp 20 MB) statt der 200 Dateien, die Spark nach dem Shuffle der Deduplizierung sonst anlegt; die Quarantäne passt in eine Datei. Das halbierte die Laufzeit je Monat ungefähr. Ein Magic-Committer wäre die Alternative, braucht aber ein weiteres Jar und ist nicht aktiviert.
 
@@ -39,7 +41,7 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 | `negative_duration` | Dropoff vor Pickup | technisch unmöglich |
 | `duration_over_24h` | Fahrt länger als 24 Stunden | Taxameter nicht beendet |
 | `distance_invalid` | Distanz fehlt, < 0 oder > 200 Meilen | Messfehler |
-| `amount_invalid` | Fahrpreis oder Gesamtbetrag fehlt, ist NaN oder < 0 | Stornos und Korrekturbuchungen, keine Fahrten |
+| `amount_invalid` | Fahrpreis oder Gesamtbetrag fehlt, ist NaN, unendlich oder < 0 | Stornos und Korrekturbuchungen, keine Fahrten; unendliche Werte würden die Mittelwerte in Gold verfälschen. Eine Obergrenze gibt es nicht |
 | `location_invalid` | Pickup- oder Dropoff-Zone fehlt oder liegt außerhalb 1 bis 265 | keine gültige TLC-Zone |
 | `passenger_count_invalid` | negativ oder mehr als 9 Passagiere | Eingabefehler; ein fehlender Wert bleibt erlaubt, weil er in der Quelle häufig fehlt |
 
@@ -58,13 +60,15 @@ Beim Lauf über 2024Q1 (9,55 Mio. Fahrten) wurden 1,4 % der Zeilen abgelehnt, fa
 | `trip_count` | Zahl der Fahrten, `0` ohne Fahrten |
 | `avg_trip_distance`, `avg_duration_minutes`, `avg_fare_amount`, `avg_total_amount` | Mittelwerte der Fahrten, `null` bei `trip_count = 0` |
 | `hour_of_day`, `day_of_week`, `is_weekend` | Kalendermerkmale, `day_of_week` von 1 (Montag) bis 7 (Sonntag) |
-| `_run_id`, `_processed_at` | Lineage: Lauf von Job 2 |
+| `_run_id`, `_processed_at` | Lineage: Lauf von Job 2, bei Start über den Orchestrator dessen Run-ID |
 
 Lag-Features wie die Nachfrage der Vorwoche fehlen bewusst. Sie bräuchten Daten des Vormonats, und ein Monat ließe sich dann nicht mehr für sich neu berechnen. Die ML-Anwendung bildet sie beim Training aus der Zeitreihe. Weil die Zeit lokal ist, hat die Stunde der Sommerzeitumstellung im März keine Fahrten, die im November enthält zwei echte Stunden.
 
-**Abgleich:** Vor dem Schreiben muss die Summe von `trip_count` genau der Zahl der Silver-Zeilen des Monats entsprechen. Fiele eine Fahrt beim Join auf das Raster still weg (Zone oder Zeit außerhalb), gilt der Monat als `failed`. Wie in Job 1 wird die Gold-Partition dann gelöscht, statt einen alten Stand neben neuem Silver stehen zu lassen.
+**Abgleich:** Vor dem Schreiben muss die Summe von `trip_count` genau der Zahl der Silver-Zeilen des Monats entsprechen, und die Silver-Daten des Monats müssen aus genau einem Lauf von Job 1 stammen (mehrere `_run_id` deuten auf einen abgebrochenen Commit oder parallele Läufe hin). Fiele eine Fahrt beim Join auf das Raster still weg (Zone oder Zeit außerhalb), gilt der Monat als `failed`. Weil diese Prüfungen vor dem Überschreiben laufen, bleibt der bisherige Gold-Monat dann unverändert; welcher Lauf ihn geschrieben hat, zeigt `_run_id`. Nur wenn das Schreiben selbst scheitert, wird die Gold-Partition gelöscht, weil sie dann halb ersetzt sein kann.
 
-**Report** pro Lauf nach `s3a://gold/_runs/yellow_tripdata/<run_id>.json`, je Monat mit `rows_silver`, `rows_gold`, `trips_in_gold`, `rows_without_trips`, `silver_run_ids` (aus welchen Läufen von Job 1 die Daten stammen) und Laufzeit. Über `_run_id` in Silver und `_source_file` lässt sich jede Gold-Partition so bis zur Bronze-Datei zurückverfolgen.
+**Bekannte Grenze:** Gold wird direkt überschrieben, es gibt keine veröffentlichte Version oder Historie. Scheitert ein Lauf nach Job 1, liegt neues Silver neben älterem Gold. Ob Gold zum aktuellen Silver passt, zeigen der Report (`status`, `silver_run_ids`) und der Vergleich mit dem neuesten Report von Job 1.
+
+**Report** pro Lauf nach `s3a://gold/_runs/yellow_tripdata/<run_id>.json`, je Monat mit `rows_silver`, `rows_gold`, `trips_in_gold`, `rows_without_trips`, `silver_run_ids` (aus welchen Läufen von Job 1 die Daten stammen) und Laufzeit. Über `_run_id` in Silver und `_source_file` lässt sich jede Gold-Partition so bis zur Bronze-Datei zurückverfolgen. Nach einem Lauf über den Orchestrator tragen Gold, das zugehörige Silver, alle Reports unter `_runs/` und `runs/<run_id>.json` dieselbe Run-ID.
 
 Idempotenz und Exit-Codes wie bei Job 1; Exit `3` heißt hier, dass für einen Monat Silver-Daten fehlen. Jeder Monat wird als eine Datei geschrieben, weil Spark nach dem Join sonst 200 Dateien mit je rund 1.000 Zeilen anlegt.
 
@@ -73,14 +77,15 @@ Beim Lauf über 2024Q1 (9,42 Mio. Silver-Fahrten) brauchte Job 2 je Monat 6 bis 
 ## Aufruf
 
 ```sh
-docker compose up gold-job                            # ganze Kette für INGEST_PERIOD
-docker compose up -d spark-worker                     # Cluster für Einzelläufe
-docker compose run --rm --no-deps silver-job --month 2024-01    # einzelner Monat, z. B. zur Wiederholung
-docker compose run --rm --no-deps silver-job --quarter 2024Q1
-docker compose run --rm --no-deps gold-job --quarter 2024Q1
+uv run --project services/orchestrator orchestrator --quarter 2024Q1   # vollständige Pipeline
+docker compose --profile jobs build                                  # Images für manuelle Einzelläufe
+docker compose up -d                                                 # nur Infrastruktur
+docker compose run --rm silver-job --month 2024-01                    # einzelner Monat, z. B. zur Wiederholung
+docker compose run --rm silver-job --quarter 2024Q1
+docker compose run --rm gold-job --quarter 2024Q1
 ```
 
-`--no-deps` verhindert, dass vorher die Schritte davor für den Zeitraum aus `.env` laufen; die Bronze- bzw. Silver-Daten des gewünschten Zeitraums müssen schon vorliegen.
+`run` startet nur den angegebenen Job und seine Infrastruktur (`lake-init`, Spark-Worker), keine anderen Datenjobs. Die Bronze- bzw. Silver-Daten des Zeitraums müssen schon vorliegen.
 
 ## Umgebungsvariablen
 

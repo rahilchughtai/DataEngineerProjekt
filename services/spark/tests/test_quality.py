@@ -48,7 +48,12 @@ def test_missing_passenger_count_is_allowed(bronze: Callable[..., DataFrame]) ->
         ({"total_amount": None}, "amount_invalid"),
         ({"fare_amount": float("nan")}, "amount_invalid"),
         ({"total_amount": float("nan")}, "amount_invalid"),
+        ({"fare_amount": float("inf")}, "amount_invalid"),
+        ({"fare_amount": float("-inf")}, "amount_invalid"),
+        ({"total_amount": float("inf")}, "amount_invalid"),
+        ({"total_amount": float("-inf")}, "amount_invalid"),
         ({"trip_distance": float("nan")}, "distance_invalid"),
+        ({"trip_distance": float("inf")}, "distance_invalid"),
         ({"PULocationID": 0}, "location_invalid"),
         ({"DOLocationID": 266}, "location_invalid"),
         ({"PULocationID": None}, "location_invalid"),
@@ -60,6 +65,10 @@ def test_rule_rejects(
     bronze: Callable[..., DataFrame], override: dict[str, Any], expected: str
 ) -> None:
     assert reason(bronze, override) == expected
+
+
+def test_large_finite_amount_passes(bronze: Callable[..., DataFrame]) -> None:
+    assert reason(bronze, {"fare_amount": 1e9, "total_amount": 1e9}) is None
 
 
 def test_first_violated_rule_wins(bronze: Callable[..., DataFrame]) -> None:

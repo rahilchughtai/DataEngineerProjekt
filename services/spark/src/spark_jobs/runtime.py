@@ -1,11 +1,35 @@
-"""Gemeinsamer Rahmen der Spark-Jobs: Logging und Exit-Code aus dem Run-Report."""
+"""Gemeinsamer Rahmen der Spark-Jobs: Run-ID, Logging und Exit-Code aus dem Run-Report."""
 
 import logging
 import os
+import re
+import secrets
 import sys
+from datetime import datetime, timezone
 from typing import Any
 
 log = logging.getLogger("runtime")
+
+
+RUN_ID_ENV = "PIPELINE_RUN_ID"
+RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
+
+
+def new_run_id() -> str:
+    """Nach Startzeit sortierbar; der Zufallsteil trennt Läufe, die in derselben Sekunde starten."""
+    return f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
+
+
+def resolve_run_id() -> str:
+    """Run-ID des Orchestrators aus PIPELINE_RUN_ID, bei Einzelaufruf eine neue."""
+    run_id = os.environ.get(RUN_ID_ENV, "").strip()
+    if not run_id:
+        return new_run_id()
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        raise ValueError(
+            f"Ungültige {RUN_ID_ENV} {run_id!r}, erwartet YYYYMMDDTHHMMSSZ-xxxxxx (hex)"
+        )
+    return run_id
 
 
 def setup_logging() -> None:
