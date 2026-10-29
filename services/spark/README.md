@@ -19,11 +19,11 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 6. **Schreiben**, partitioniert nach `year=YYYY/month=MM` wie in Bronze. `year` und `month` sind Strings; `spark.sql.sources.partitionColumnTypeInference.enabled=false` ([conf/spark-defaults.conf](conf/spark-defaults.conf)) verhindert, dass Spark sie beim Lesen zu Zahlen macht:
    - gültige Zeilen nach `s3a://silver/yellow_tripdata/`
    - abgelehnte Zeilen mit Grund nach `s3a://silver/_quarantine/yellow_tripdata/`
-   - Report pro Lauf nach `s3a://silver/_runs/yellow_tripdata/<run_id>.json`, mit `rows_in`, `rows_valid`, `rows_rejected`, `duplicates`, Ablehnungen je Regel und Laufzeit je Monat. Die Run-ID hat die Form `YYYYMMDDTHHMMSSZ-xxxxxx`: nach Startzeit sortierbar, der Zufallsteil verhindert, dass zwei Läufe in derselben Sekunde ihre Reports überschreiben. Startet der Orchestrator den Job, übernimmt dieser dessen Run-ID aus `PIPELINE_RUN_ID`; ein ungültiger Wert beendet den Job mit Exit-Code `2`, bevor Spark startet. Ohne die Variable, etwa bei einem manuellen `compose run`, erzeugt der Job eine eigene Run-ID
+   - Report pro Lauf nach `s3a://silver/_runs/yellow_tripdata/<run_id>.json`, mit `rows_in`, `rows_valid`, `rows_rejected`, `duplicates`, Ablehnungen je Regel und Laufzeit je Monat. Die Run-ID hat die Form `YYYYMMDDTHHMMSSZ-xxxxxx`: nach Startzeit sortierbar, der Zufallsteil verhindert, dass zwei Läufe in derselben Sekunde ihre Reports überschreiben. Die Run-ID des Laufs liest der Job aus der Datei in `PIPELINE_RUN_ID_FILE`, die `run-init` schreibt; fehlen Variable oder Datei oder ist die Run-ID ungültig, endet der Job mit Exit-Code `2`, bevor Spark startet
 
 **Idempotenz:** `mode("overwrite")` mit `partitionOverwriteMode=dynamic` ersetzt nur die Partition des verarbeiteten Monats, alle anderen bleiben unverändert. Hat ein Monat beim erneuten Lauf keine abgelehnten Zeilen mehr, wird die alte Quarantäne-Partition gelöscht. Der Report rechnet sich auf: `rows_in = rows_valid + duplicates + rows_rejected`.
 
-**Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration, `3` wenn für mindestens einen Monat die Bronze-Daten fehlen (`missing`). Ein unvollständiges Quartal gilt nicht als Erfolg, sonst würden Gold und das Training still auf einem Teil der Monate weiterlaufen. Compose startet den Job nicht automatisch neu (Standard: `restart: "no"`); der Orchestrator bricht beim ersten Fehler ab. Schlägt das Schreiben eines Monats fehl, werden seine Silver- und Quarantäne-Partition gelöscht: Der Monat fehlt dann ganz, statt halb aktualisiert zu sein, bis ein erneuter Lauf ihn schreibt.
+**Exit-Code:** `0` bei Erfolg, `1` wenn mindestens ein Monat fehlschlägt, `2` bei falscher Konfiguration, `3` wenn für mindestens einen Monat die Bronze-Daten fehlen (`missing`). Ein unvollständiges Quartal gilt nicht als Erfolg, sonst würden Gold und das Training still auf einem Teil der Monate weiterlaufen. Compose startet den Job nicht neu (`restart: "no"`), und die folgenden Schritte starten nicht, weil sie auf `service_completed_successfully` warten. Schlägt das Schreiben eines Monats fehl, werden seine Silver- und Quarantäne-Partition gelöscht: Der Monat fehlt dann ganz, statt halb aktualisiert zu sein, bis ein erneuter Lauf ihn schreibt.
 
 **Leere Monate:** Enthält die Bronze-Datei keine gültige Zeile (leer oder komplett abgelehnt), gilt der Monat als `failed` (Exit-Code `1`). Geschrieben wird dann nichts, Silver und Quarantäne behalten ihren bisherigen Stand; die Zähler stehen trotzdem im Report. Eine Schwelle für den Anteil abgelehnter Zeilen gibt es nicht, der Anteil lässt sich aus `rows_rejected` und `rows_in` im Report ablesen.
 
@@ -60,7 +60,7 @@ Beim Lauf über 2024Q1 (9,55 Mio. Fahrten) wurden 1,4 % der Zeilen abgelehnt, fa
 | `trip_count` | Zahl der Fahrten, `0` ohne Fahrten |
 | `avg_trip_distance`, `avg_duration_minutes`, `avg_fare_amount`, `avg_total_amount` | Mittelwerte der Fahrten, `null` bei `trip_count = 0` |
 | `hour_of_day`, `day_of_week`, `is_weekend` | Kalendermerkmale, `day_of_week` von 1 (Montag) bis 7 (Sonntag) |
-| `_run_id`, `_processed_at` | Lineage: Lauf von Job 2, bei Start über den Orchestrator dessen Run-ID |
+| `_run_id`, `_processed_at` | Lineage: Run-ID des Laufs und Zeitpunkt von Job 2 |
 
 Lag-Features wie die Nachfrage der Vorwoche fehlen bewusst. Sie bräuchten Daten des Vormonats, und ein Monat ließe sich dann nicht mehr für sich neu berechnen. Die ML-Anwendung bildet sie beim Training aus der Zeitreihe. Weil die Zeit lokal ist, hat die Stunde der Sommerzeitumstellung im März keine Fahrten, die im November enthält zwei echte Stunden.
 
@@ -68,24 +68,19 @@ Lag-Features wie die Nachfrage der Vorwoche fehlen bewusst. Sie bräuchten Daten
 
 **Bekannte Grenze:** Gold wird direkt überschrieben, es gibt keine veröffentlichte Version oder Historie. Scheitert ein Lauf nach Job 1, liegt neues Silver neben älterem Gold. Ob Gold zum aktuellen Silver passt, zeigen der Report (`status`, `silver_run_ids`) und der Vergleich mit dem neuesten Report von Job 1.
 
-**Report** pro Lauf nach `s3a://gold/_runs/yellow_tripdata/<run_id>.json`, je Monat mit `rows_silver`, `rows_gold`, `trips_in_gold`, `rows_without_trips`, `silver_run_ids` (aus welchen Läufen von Job 1 die Daten stammen) und Laufzeit. Über `_run_id` in Silver und `_source_file` lässt sich jede Gold-Partition so bis zur Bronze-Datei zurückverfolgen. Nach einem Lauf über den Orchestrator tragen Gold, das zugehörige Silver, alle Reports unter `_runs/` und `runs/<run_id>.json` dieselbe Run-ID.
+**Report** pro Lauf nach `s3a://gold/_runs/yellow_tripdata/<run_id>.json`, je Monat mit `rows_silver`, `rows_gold`, `trips_in_gold`, `rows_without_trips`, `silver_run_ids` (aus welchen Läufen von Job 1 die Daten stammen) und Laufzeit. Über `_run_id` in Silver und `_source_file` lässt sich jede Gold-Partition so bis zur Bronze-Datei zurückverfolgen. Nach einem Lauf mit `docker compose up` tragen Gold, das zugehörige Silver, alle Reports unter `_runs/` und der Laufbericht unter `gold/_runs/pipeline/` dieselbe Run-ID.
 
 Idempotenz und Exit-Codes wie bei Job 1; Exit `3` heißt hier, dass für einen Monat Silver-Daten fehlen. Jeder Monat wird als eine Datei geschrieben, weil Spark nach dem Join sonst 200 Dateien mit je rund 1.000 Zeilen anlegt.
 
 Beim Lauf über 2024Q1 (9,42 Mio. Silver-Fahrten) brauchte Job 2 je Monat 6 bis 15 Sekunden, Gold umfasst 578.760 Zeilen und 8,4 MB. 55 bis 61 % der Zone-Stunden haben keine Fahrt, vor allem in Randzonen und nachts.
 
+## Laufbericht (`run-report`)
+
+[pipeline_report.py](src/spark_jobs/pipeline_report.py) ist der letzte Schritt von `docker compose up` und startet, wenn `gold-job` erfolgreich war. Er liest die Reports von Ingestion, Job 1 und Job 2 unter der Run-ID des Laufs und schreibt `s3a://gold/_runs/pipeline/<run_id>.json` mit Zeitraum, Monaten, Start- und Endzeit, Gesamtdauer und je Schritt Zählern und Laufzeit. Weil er nur kleine JSON-Dateien liest, läuft er mit `--master local[1]` im eigenen Container statt auf dem Cluster und hängt nur im Speichernetz. Fehlt ein Report, endet er mit Exit-Code `1`.
+
 ## Aufruf
 
-```sh
-uv run --project services/orchestrator orchestrator --quarter 2024Q1   # vollständige Pipeline
-docker compose --profile jobs build                                  # Images für manuelle Einzelläufe
-docker compose up -d                                                 # nur Infrastruktur
-docker compose run --rm silver-job --month 2024-01                    # einzelner Monat, z. B. zur Wiederholung
-docker compose run --rm silver-job --quarter 2024Q1
-docker compose run --rm gold-job --quarter 2024Q1
-```
-
-`run` startet nur den angegebenen Job und seine Infrastruktur (`lake-init`, Spark-Worker), keine anderen Datenjobs. Die Bronze- bzw. Silver-Daten des Zeitraums müssen schon vorliegen.
+Beide Jobs und der Laufbericht starten über `docker compose up` in der Reihenfolge der `depends_on`-Kette (siehe [README](../../README.md#start)). Den Zeitraum legt `INGEST_PERIOD` fest; ein einzelner Monat (`INGEST_PERIOD=2024-03 docker compose up`) ersetzt nur dessen Partitionen.
 
 ## Umgebungsvariablen
 
@@ -95,7 +90,8 @@ docker compose run --rm gold-job --quarter 2024Q1
 | `S3_SPARK_ACCESS_KEY` / `S3_SPARK_SECRET_KEY` | – | Identität `spark`: liest Bronze, schreibt Silver und Gold |
 | `BRONZE_BUCKET` / `SILVER_BUCKET` / `GOLD_BUCKET` | `bronze` / `silver` / `gold` | Buckets |
 | `TLC_DATASET` | `yellow_tripdata` | Präfix der Daten; in Compose fest, weil [schema.py](src/spark_jobs/schema.py) nur das Yellow-Schema kennt |
-| `INGEST_PERIOD` | – | Zeitraum (`YYYYQn` oder `YYYY-MM`), wenn kein `--quarter`/`--month` übergeben wird |
+| `INGEST_PERIOD` | – | Zeitraum des Laufs (`YYYYQn` oder `YYYY-MM`), Pflicht |
+| `PIPELINE_RUN_ID_FILE` | – | Datei mit der Run-ID des Laufs, Pflicht, in Compose `/run/pipeline/run-id` |
 | `SPARK_WORKER_CORES` / `SPARK_WORKER_MEMORY` | `2` / `2g` | Ressourcen pro Worker |
 | `SPARK_EXECUTOR_MEMORY` | `1g` | Speicher pro Executor |
 | `LOG_LEVEL` | `INFO` | Log-Level des Jobs; Spark selbst loggt auf WARN ([conf/log4j2.properties](conf/log4j2.properties)) |

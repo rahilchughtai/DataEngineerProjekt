@@ -1,7 +1,8 @@
 #!/bin/sh
 # Startet einen Spark-Job im Client-Modus: Der Driver läuft in diesem Container, die Executors auf
 # den Workern. Die Executors verbinden sich zurück zum Driver, deshalb meldet er seine Adresse im
-# gemeinsamen Netz. Ein fester Name wie der Service-Name fehlt bei docker compose run.
+# gemeinsamen Netz; der Container hängt in zwei Netzen, die passende Adresse liefert
+# master-route-address.sh.
 # Aufruf: submit-job.sh [spark-submit-Optionen] <job.py> [Job-Argumente]
 set -eu
 

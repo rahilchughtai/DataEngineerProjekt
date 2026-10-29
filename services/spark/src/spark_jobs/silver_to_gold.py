@@ -8,7 +8,6 @@ muss die Summe von trip_count genau der Zahl der Silver-Zeilen entsprechen und S
 einem Lauf von Job 1 stammen; sonst bleibt der bisherige Gold-Monat unverändert.
 """
 
-import argparse
 import json
 import logging
 import sys
@@ -22,9 +21,9 @@ from pyspark.sql import functions as F
 
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
-from spark_jobs.periods import Month, add_period_args, resolve_months
+from spark_jobs.periods import Month, months_from_env
 from spark_jobs.quality import LOCATION_ID_RANGE, month_bounds
-from spark_jobs.runtime import exit_code, resolve_run_id, setup_logging
+from spark_jobs.runtime import exit_code, read_run_id, setup_logging
 from spark_jobs.session import ConfigError, build_session
 
 log = logging.getLogger("silver_to_gold")
@@ -51,15 +50,6 @@ GOLD_COLUMNS = [
 
 class ReconciliationError(RuntimeError):
     """Gold enthält nicht genau die Fahrten aus Silver."""
-
-
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="silver_to_gold",
-        description="Aggregiert Silver-Monate zur stündlichen Nachfrage je Zone in Gold.",
-    )
-    add_period_args(parser)
-    return parser.parse_args(argv)
 
 
 def hour_grid(spark: SparkSession, month: Month, zones: Iterable[int] = ZONES) -> DataFrame:
@@ -252,13 +242,12 @@ def run(
     return report
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     setup_logging()
     try:
-        args = _parse_args(argv)
-        months = resolve_months(args)
+        months = months_from_env()
         paths = LakePaths.from_env()
-        run_id = resolve_run_id()
+        run_id = read_run_id()
         spark = build_session("silver_to_gold")
     except (ValueError, ConfigError) as err:
         log.error("%s", err)

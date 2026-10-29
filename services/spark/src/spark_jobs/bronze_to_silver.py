@@ -7,7 +7,6 @@ year und month sind Strings; spark-defaults.conf schaltet die Typableitung beim 
 Pro Lauf entsteht ein JSON-Report mit Zählern je Regel und Laufzeiten.
 """
 
-import argparse
 import json
 import logging
 import math
@@ -21,9 +20,9 @@ from pyspark.sql import functions as F
 
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
-from spark_jobs.periods import Month, add_period_args, resolve_months
+from spark_jobs.periods import Month, months_from_env
 from spark_jobs.quality import RULE_NAMES, classify
-from spark_jobs.runtime import exit_code, resolve_run_id, setup_logging
+from spark_jobs.runtime import exit_code, read_run_id, setup_logging
 from spark_jobs.schema import harmonize
 from spark_jobs.session import ConfigError, build_session
 
@@ -32,15 +31,6 @@ log = logging.getLogger("bronze_to_silver")
 # Knapp 20 MB je Parquet-Datei. Ohne Vorgabe schreibt Spark nach dem Shuffle von dropDuplicates
 # 200 kleine Dateien je Monat (spark.sql.shuffle.partitions).
 ROWS_PER_FILE = 1_000_000
-
-
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="bronze_to_silver",
-        description="Bereinigt und validiert Bronze-Monate und schreibt sie nach Silver.",
-    )
-    add_period_args(parser)
-    return parser.parse_args(argv)
 
 
 def deduplicate(raw: DataFrame) -> DataFrame:
@@ -190,13 +180,12 @@ def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str)
     return report
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     setup_logging()
     try:
-        args = _parse_args(argv)
-        months = resolve_months(args)
+        months = months_from_env()
         paths = LakePaths.from_env()
-        run_id = resolve_run_id()
+        run_id = read_run_id()
         spark = build_session("bronze_to_silver")
     except (ValueError, ConfigError) as err:
         log.error("%s", err)

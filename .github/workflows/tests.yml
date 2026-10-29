@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         # Jeder Service ist ein eigenes uv-Projekt mit eigenem tests/-Verzeichnis.
-        service: [ingestion, spark, orchestrator]
+        service: [ingestion, spark]
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
@@ -72,11 +72,11 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pre-commit run --all-files --show-diff-on-failure
 
-  # End-to-End-Lauf über den echten Orchestrator mit den echten Images, SeaweedFS und dem
-  # Spark-Cluster. Ingestion lädt gekürzte echte TLC-Dateien (tests/e2e/fixtures) von einem
-  # Mock-Server statt von CloudFront. Prüft Ingestion, Job 1 und Job 2 über ein Quartal, die
-  # Wiederholung (idempotent), ein nicht veröffentlichtes Quartal (403 → Exit-Code 3),
-  # Zugriffsrechte und die Run-ID über alle Schichten. Podman deckt er nicht ab.
+  # End-to-End-Lauf über docker compose up mit den echten Images, SeaweedFS und dem Spark-Cluster.
+  # Ingestion lädt gekürzte echte TLC-Dateien (tests/e2e/fixtures) von einem Mock-Server statt von
+  # CloudFront. Prüft die Kette über ein Quartal, die Wiederholung (idempotent), einen einzelnen
+  # Monat, ein nicht veröffentlichtes Quartal (403 → Exit-Code 3), Zugriffsrechte und die Run-ID
+  # über alle Schichten. Podman deckt er nicht ab.
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -95,9 +95,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-          cache-dependency-glob: |
-            tests/e2e/uv.lock
-            services/orchestrator/uv.lock
+          cache-dependency-glob: tests/e2e/uv.lock
 
       - name: .env aus dem Beispiel
         run: cp ../../.env.example ../../.env
@@ -109,11 +107,11 @@ jobs:
 
       - name: Logs
         if: failure() || cancelled()
-        run: $COMPOSE_CMD --profile jobs logs --no-color
+        run: $COMPOSE_CMD logs --no-color
 
       - name: Aufräumen
         if: always()
-        run: $COMPOSE_CMD --profile jobs down --volumes --remove-orphans
+        run: $COMPOSE_CMD down --volumes --remove-orphans
 
   # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit,
   # neue Jobs genügt es in needs einzutragen.

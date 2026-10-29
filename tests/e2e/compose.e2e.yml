@@ -2,10 +2,10 @@
 #   COMPOSE_FILE=docker-compose.yml:tests/e2e/compose.e2e.yml   (Windows: ; statt :)
 #   COMPOSE_ENV_FILES=.env,tests/e2e/e2e.env                    (setzt TLC_BASE_URL auf den Mock)
 # Relative Pfade beziehen sich wie in Compose üblich auf das Verzeichnis der ersten Datei
-# (Repo-Root). Der Orchestrator übernimmt beide Variablen unverändert für seine Compose-Aufrufe.
+# (Repo-Root). Den Zeitraum je Lauf setzt der Test über INGEST_PERIOD in der Umgebung.
 
-# Eigenes Projekt mit eigenem Volume und eigenen Netzen: ein Testlauf löscht nie den lokalen Data
-# Lake. Die Host-Ports 8333 und 8080 bleiben gleich, die normale Umgebung muss also gestoppt sein.
+# Eigenes Projekt mit eigenen Volumes und Netzen: ein Testlauf löscht nie den lokalen Data Lake.
+# Die Host-Ports 8333 und 8080 bleiben gleich, die normale Umgebung muss also gestoppt sein.
 name: taxi-pipeline-e2e
 
 services:
@@ -56,3 +56,5 @@ networks:
 volumes:
   seaweedfs-data:
     name: taxi-pipeline-e2e-seaweedfs-data
+  pipeline-run:
+    name: taxi-pipeline-e2e-run

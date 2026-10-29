@@ -12,7 +12,6 @@ __pycache__/
 
 # Lokale Daten
 data/
-runs/
 *.parquet
 # Gekürzte echte TLC-Dateien für den End-to-End-Test
 !tests/e2e/fixtures/trip-data/*.parquet

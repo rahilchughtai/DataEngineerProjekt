@@ -45,7 +45,6 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "boto3" },
-    { name = "orchestrator" },
     { name = "pyarrow" },
     { name = "pytest" },
 ]
@@ -53,7 +52,6 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.40" },
-    { name = "orchestrator", editable = "../../services/orchestrator" },
     { name = "pyarrow", specifier = ">=21" },
     { name = "pytest", specifier = ">=8.4" },
 ]
@@ -75,16 +73,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/d3/59/322338183ecda247f
 wheels = [
     { url = "https://files.pythonhosted.org/packages/14/2f/967ba146e6d58cf6a652da73885f52fc68001525b4197effc174321d70b4/jmespath-1.1.0-py3-none-any.whl", hash = "sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64", size = 20419, upload-time = "2026-01-22T16:35:24.919Z" },
 ]
-
-[[package]]
-name = "orchestrator"
-version = "0.1.0"
-source = { editable = "../../services/orchestrator" }
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.4" }]
 
 [[package]]
 name = "packaging"

@@ -1,14 +1,11 @@
-"""Kommandozeile des Ingestion-Service."""
+"""Einstieg des Ingestion-Service: lädt die Monate aus INGEST_PERIOD nach Bronze."""
 
-import argparse
 import logging
 import os
 import re
-import secrets
 import sys
 import tempfile
 import time
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +14,11 @@ import requests
 from ingestion import storage
 from ingestion.config import Config, ConfigError
 from ingestion.download import InvalidFileError, NotPublishedError, download, fetch_source_info
-from ingestion.months import Month, parse_month, parse_period, quarter_months
+from ingestion.months import Month, months_from_env
 
 log = logging.getLogger("ingestion")
 
-RUN_ID_ENV = "PIPELINE_RUN_ID"
+RUN_ID_FILE_ENV = "PIPELINE_RUN_ID_FILE"
 RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
 
 
@@ -36,35 +33,7 @@ def _setup_logging() -> None:
     logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
-def _parse_args(argv: list[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="ingestion",
-        description="Lädt TLC-Monatsdateien und legt sie unverändert in Bronze ab.",
-    )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--quarter", metavar="YYYYQn", help="alle Monate eines Quartals")
-    group.add_argument("--month", metavar="YYYY-MM", help="ein einzelner Monat")
-    parser.add_argument(
-        "--force", action="store_true", help="auch laden, wenn Bronze schon aktuell ist"
-    )
-    return parser.parse_args(argv)
-
-
-def resolve_months(args: argparse.Namespace) -> list[Month]:
-    """CLI-Argumente haben Vorrang, sonst INGEST_PERIOD aus der Umgebung."""
-    if args.quarter:
-        return quarter_months(args.quarter)
-    if args.month:
-        return [parse_month(args.month)]
-    period = os.environ.get("INGEST_PERIOD", "").strip()
-    if not period:
-        raise ValueError("Kein Zeitraum angegeben (--quarter/--month oder INGEST_PERIOD)")
-    return parse_period(period)
-
-
-def ingest_month(
-    month: Month, cfg: Config, session: requests.Session, s3: Any, force: bool
-) -> dict[str, Any]:
+def ingest_month(month: Month, cfg: Config, session: requests.Session, s3: Any) -> dict[str, Any]:
     file_name = f"{cfg.dataset}_{month}.parquet"
     url = f"{cfg.base_url}/{file_name}"
     key = storage.object_key(cfg.dataset, month)
@@ -73,7 +42,7 @@ def ingest_month(
 
     source = fetch_source_info(session, url, cfg)
     metadata = storage.stored_metadata(s3, cfg.bronze_bucket, key)
-    if not force and storage.is_current(metadata, source):
+    if storage.is_current(metadata, source):
         log.info("month=%s status=skipped reason=unchanged key=%s", month, key)
         return entry | {"status": "skipped", "seconds": round(time.monotonic() - started, 2)}
 
@@ -102,30 +71,28 @@ def ingest_month(
     }
 
 
-def new_run_id() -> str:
-    """Nach Startzeit sortierbar; der Zufallsteil trennt Läufe, die in derselben Sekunde starten."""
-    return f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
-
-
-def resolve_run_id() -> str:
-    """Run-ID des Orchestrators aus PIPELINE_RUN_ID, bei Einzelaufruf eine neue."""
-    run_id = os.environ.get(RUN_ID_ENV, "").strip()
-    if not run_id:
-        return new_run_id()
+def read_run_id() -> str:
+    """Run-ID des Laufs aus der Datei, die run-init schreibt (PIPELINE_RUN_ID_FILE)."""
+    path = os.environ.get(RUN_ID_FILE_ENV, "").strip()
+    if not path:
+        raise ValueError(f"Umgebungsvariable {RUN_ID_FILE_ENV} fehlt (Run-ID von run-init)")
+    try:
+        run_id = Path(path).read_text(encoding="utf-8").strip()
+    except OSError as err:
+        raise ValueError(f"{RUN_ID_FILE_ENV}: {path} nicht lesbar ({err})") from err
     if not RUN_ID_PATTERN.fullmatch(run_id):
         raise ValueError(
-            f"Ungültige {RUN_ID_ENV} {run_id!r}, erwartet YYYYMMDDTHHMMSSZ-xxxxxx (hex)"
+            f"Ungültige Run-ID {run_id!r} in {path}, erwartet YYYYMMDDTHHMMSSZ-xxxxxx (hex)"
         )
     return run_id
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     _setup_logging()
     try:
-        args = _parse_args(argv)
-        months = resolve_months(args)
+        months = months_from_env()
         cfg = Config.from_env()
-        run_id = resolve_run_id()
+        run_id = read_run_id()
     except (ValueError, ConfigError) as err:
         log.error("%s", err)
         return 2
@@ -140,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         session.headers["User-Agent"] = "taxi-batch-pipeline-ingestion/0.1"
         for month in months:
             try:
-                results.append(ingest_month(month, cfg, session, s3, args.force))
+                results.append(ingest_month(month, cfg, session, s3))
             except NotPublishedError as err:
                 log.warning("month=%s status=not_published %s", month, err)
                 results.append({"month": str(month), "status": "not_published"})

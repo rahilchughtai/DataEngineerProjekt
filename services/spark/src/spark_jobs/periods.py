@@ -5,7 +5,6 @@ Bewusst kopiert statt geteilt: jeder Service ist ein eigenständiges Projekt und
 tests/test_periods.py vergleicht beide Fassungen und schlägt bei Abweichungen fehl.
 """
 
-import argparse
 import os
 import re
 from dataclasses import dataclass
@@ -52,19 +51,13 @@ def parse_period(value: str) -> list[Month]:
     raise ValueError(f"Zeitraum muss YYYYQn oder YYYY-MM sein, nicht {value!r}")
 
 
-def add_period_args(parser: argparse.ArgumentParser) -> None:
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--quarter", metavar="YYYYQn", help="alle Monate eines Quartals")
-    group.add_argument("--month", metavar="YYYY-MM", help="ein einzelner Monat")
-
-
-def resolve_months(args: argparse.Namespace) -> list[Month]:
-    """CLI-Argumente haben Vorrang, sonst INGEST_PERIOD aus der Umgebung."""
-    if args.quarter:
-        return quarter_months(args.quarter)
-    if args.month:
-        return [parse_month(args.month)]
+def period_from_env() -> str:
+    """Zeitraum des Laufs aus INGEST_PERIOD, wie ihn Compose aus .env setzt."""
     period = os.environ.get("INGEST_PERIOD", "").strip()
     if not period:
-        raise ValueError("Kein Zeitraum angegeben (--quarter/--month oder INGEST_PERIOD)")
-    return parse_period(period)
+        raise ValueError("Kein Zeitraum angegeben (INGEST_PERIOD, siehe .env.example)")
+    return period
+
+
+def months_from_env() -> list[Month]:
+    return parse_period(period_from_env())

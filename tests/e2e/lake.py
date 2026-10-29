@@ -2,7 +2,8 @@
 
 Nichts ist hier fest eingetragen: Endpunkt, Buckets und Zugangsdaten stammen aus der aufgelösten
 Compose-Konfiguration, die Identitäten aus seaweedfs/s3.json.template. Tabellen werden an ihren
-Hive-Partitionen (…/year=YYYY/month=MM/…) erkannt, Reports an der Run-ID unter _runs/.
+Hive-Partitionen (…/year=YYYY/month=MM/…) erkannt, Reports an der Run-ID unter _runs/. Der
+Laufbericht von run-report liegt getrennt davon unter _runs/pipeline/ in Gold.
 """
 
 import hashlib
@@ -26,6 +27,7 @@ IDENTITIES: list[dict[str, Any]] = json.loads(
     (ROOT / "seaweedfs" / "s3.json.template").read_text(encoding="utf-8")
 )["identities"]
 ADMIN = next(identity["name"] for identity in IDENTITIES if "Admin" in identity["actions"])
+PIPELINE_REPORTS = "_runs/pipeline/"
 
 
 def sha256(data: bytes) -> str:
@@ -110,11 +112,20 @@ class Lake:
         return self.client.get_object(Bucket=bucket, Key=key)["Body"].read()
 
     def report_key(self, bucket: str, run_id: str) -> str:
-        (key,) = [k for k in self.keys(bucket, "_runs/") if k.endswith(f"/{run_id}.json")]
+        """Report des Service, der in den Bucket schreibt; ohne den Laufbericht von run-report."""
+        (key,) = [
+            k
+            for k in self.keys(bucket, "_runs/")
+            if k.endswith(f"/{run_id}.json") and not k.startswith(PIPELINE_REPORTS)
+        ]
         return key
 
     def report(self, bucket: str, run_id: str) -> dict[str, Any]:
         return json.loads(self.read(bucket, self.report_key(bucket, run_id)))
+
+    def pipeline_report(self, run_id: str) -> dict[str, Any]:
+        gold = self.settings.buckets["gold"]
+        return json.loads(self.read(gold, f"{PIPELINE_REPORTS}{run_id}.json"))
 
     def can(self, operation: str, bucket: str, existing_key: str) -> bool:
         """Führt List, Read oder Write aus; False, wenn SeaweedFS den Zugriff verweigert."""
@@ -163,13 +174,17 @@ class Lake:
 
 
 @dataclass(frozen=True)
-class Run:
-    """Ergebnis eines Orchestrator-Laufs: Exit-Code, Laufbericht und Stand des Lake danach."""
-
+class Container:
+    state: str
     exit_code: int
-    report: dict[str, Any]
-    state: LakeState
 
-    @property
-    def run_id(self) -> str:
-        return self.report["run_id"]
+
+@dataclass(frozen=True)
+class Run:
+    """Ergebnis eines compose up: Exit-Code, Container je Service und Stand des Lake danach."""
+
+    # Exit-Code von up, nach erfolgreichem up der von compose wait run-report.
+    exit_code: int
+    containers: dict[str, Container]
+    run_id: str
+    state: LakeState

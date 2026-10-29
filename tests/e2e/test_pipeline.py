@@ -1,4 +1,4 @@
-"""End-to-End-Test: Orchestrator → Ingestion (Mock-TLC) → Job 1 → Job 2 mit gekürzten echten Daten.
+"""End-to-End-Test: docker compose up → Ingestion (Mock-TLC) → Job 1 → Job 2 → Laufbericht.
 
 Geprüft werden Invarianten statt fest eingetragener Zahlen: Bronze gegen die Dateien der Quelle,
 Zähler der Reports gegen die Daten im Lake, Silver gegen Gold, die Run-ID über alle Schichten und
@@ -6,6 +6,7 @@ die Zugriffsrechte gegen seaweedfs/s3.json.template. Die Tests folgen der Reihen
 """
 
 import calendar
+import itertools
 from typing import Any
 
 import pyarrow as pa
@@ -13,8 +14,16 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 
+from conftest import MONTH, QUARTER
 from lake import FIXTURES, IDENTITIES, Lake, LakeState, Run, Settings, sha256
-from orchestrator.cli import INCOMPLETE
+
+# Exit-Code der Services, wenn Quelldaten für einen Monat fehlen oder nicht veröffentlicht sind.
+INCOMPLETE = 3
+# Die Kette, wie sie docker compose up über depends_on abarbeitet.
+CHAIN = ["ingestion", "silver-job", "gold-job", "run-report"]
+ONE_SHOTS = ["lake-init", "run-init", *CHAIN]
+# Schritt im Laufbericht → Schicht, in die er seinen eigenen Report schreibt.
+STEP_LAYERS = {"ingestion": "bronze", "silver-job": "silver", "gold-job": "gold"}
 
 
 def by_month(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -53,13 +62,55 @@ def without_lineage(table: pa.Table) -> pa.Table:
     return data.sort_by([(name, "ascending") for name in data.column_names])
 
 
+def months_of(report: dict[str, Any]) -> list[str]:
+    return [entry["month"] for entry in report["months"]]
+
+
+def assert_succeeded(run: Run) -> None:
+    assert run.exit_code == 0, run.containers
+    for service in ONE_SHOTS:
+        container = run.containers[service]
+        assert (container.state, container.exit_code) == ("exited", 0), service
+
+
+# --- Konfiguration -------------------------------------------------------------------------------
+
+
+def test_compose_up_runs_the_chain(config: dict[str, Any]) -> None:
+    services = config["services"]
+    # Ohne Profile: docker compose up startet alle Schritte.
+    assert not [name for name, service in services.items() if service.get("profiles")]
+    for init in ("lake-init", "run-init"):
+        condition = services["ingestion"]["depends_on"][init]["condition"]
+        assert condition == "service_completed_successfully", init
+    for previous, step in itertools.pairwise(CHAIN):
+        condition = services[step]["depends_on"][previous]["condition"]
+        assert condition == "service_completed_successfully", step
+    # Ein fehlgeschlagener Schritt hält die Kette an, statt neu zu starten.
+    assert {services[name].get("restart", "no") for name in ONE_SHOTS} == {"no"}
+
+
 # --- Erster Lauf ---------------------------------------------------------------------------------
 
 
-def test_orchestrator_succeeds(first_run: Run) -> None:
-    assert first_run.exit_code == 0, first_run.report
-    assert first_run.report["status"] == "ok"
-    assert all(step["status"] == "ok" for step in first_run.report["steps"])
+def test_pipeline_succeeds(first_run: Run) -> None:
+    assert_succeeded(first_run)
+
+
+def test_pipeline_report_adds_up(first_run: Run, lake: Lake, settings: Settings) -> None:
+    report = lake.pipeline_report(first_run.run_id)
+    steps = {step["step"]: step for step in report["steps"]}
+
+    assert report["run_id"] == first_run.run_id
+    assert report["period"] == QUARTER
+    assert report["months"] == ["2024-01", "2024-02", "2024-03"]
+    assert list(steps) == list(STEP_LAYERS)
+    for step, layer in STEP_LAYERS.items():
+        service = lake.report(settings.buckets[layer], first_run.run_id)
+        assert steps[step]["counts"] == service["counts"], step
+        assert steps[step]["seconds"] == service["seconds"], step
+    # Die Gesamtzeit enthält zusätzlich Containerstarts und das Warten auf den Spark-Cluster.
+    assert report["seconds"] >= sum(step["seconds"] for step in steps.values())
 
 
 def test_ingestion_stores_source_files_unchanged(
@@ -137,7 +188,7 @@ def test_gold_reconciles_with_silver(first_run: Run, lake: Lake, settings: Setti
 
 def test_run_id_links_all_layers(first_run: Run, lake: Lake, settings: Settings) -> None:
     run_id = first_run.run_id
-    # lake.report findet den Report jeder Schicht über die Run-ID des Orchestrators.
+    # lake.report findet den Report jeder Schicht über die gemeinsame Run-ID von run-init.
     gold_report = lake.report(settings.buckets["gold"], run_id)
     assert all(entry["silver_run_ids"] == [run_id] for entry in gold_report["months"])
     for layer in ("silver", "gold"):
@@ -168,8 +219,7 @@ def test_access_matches_policy(
 
 
 def test_rerun_succeeds_with_new_run_id(first_run: Run, second_run: Run) -> None:
-    assert second_run.exit_code == 0, second_run.report
-    assert all(step["status"] == "ok" for step in second_run.report["steps"])
+    assert_succeeded(second_run)
     assert second_run.run_id != first_run.run_id
 
 
@@ -190,21 +240,48 @@ def test_rerun_is_idempotent(first_run: Run, second_run: Run, settings: Settings
                 assert run_ids(table) == {second_run.run_id}, name
 
 
+# --- Einzelner Monat -----------------------------------------------------------------------------
+
+
+def test_single_month_succeeds(month_run: Run, lake: Lake, settings: Settings) -> None:
+    assert_succeeded(month_run)
+    for layer in ("bronze", "silver", "gold"):
+        assert months_of(lake.report(settings.buckets[layer], month_run.run_id)) == [MONTH], layer
+    assert lake.pipeline_report(month_run.run_id)["months"] == [MONTH]
+    ingestion = lake.report(settings.buckets["bronze"], month_run.run_id)
+    assert {entry["status"] for entry in ingestion["months"]} == {"skipped"}
+
+
+def test_single_month_replaces_only_its_partition(
+    second_run: Run, month_run: Run, settings: Settings
+) -> None:
+    before, after = second_run.state, month_run.state
+    assert after.files == before.files
+    for layer in ("silver", "gold"):
+        bucket = settings.buckets[layer]
+        for name, table in after.tables[bucket].items():
+            assert without_lineage(table).equals(without_lineage(before.tables[bucket][name]))
+            for month in ("2024-01", "2024-02", MONTH):
+                expected = month_run.run_id if month == MONTH else second_run.run_id
+                assert run_ids(month_rows(table, month)) == {expected}, (name, month)
+
+
 # --- Nicht veröffentlichtes Quartal --------------------------------------------------------------
 
 
 def test_unpublished_quarter_stops_after_ingestion(
-    second_run: Run, unpublished_run: Run, lake: Lake, settings: Settings
+    month_run: Run, unpublished_run: Run, lake: Lake, settings: Settings
 ) -> None:
-    report = unpublished_run.report
-    *completed, last = report["steps"]
-    assert unpublished_run.exit_code == INCOMPLETE, report
-    assert report["status"] == "failed"
-    assert (last["step"], last["exit_code"]) == ("ingestion", INCOMPLETE)
-    assert all(step["status"] == "ok" for step in completed)
+    containers = unpublished_run.containers
+    assert unpublished_run.exit_code != 0
+    ingestion_container = containers["ingestion"]
+    assert (ingestion_container.state, ingestion_container.exit_code) == ("exited", INCOMPLETE)
+    # Die Schritte nach der Ingestion sind nie gestartet.
+    for service in CHAIN[1:]:
+        assert containers[service].state not in {"running", "exited"}, service
 
     ingestion = lake.report(settings.buckets["bronze"], unpublished_run.run_id)
     assert ingestion["months"]
     assert {entry["status"] for entry in ingestion["months"]} == {"not_published"}
     # Kein Job hat etwas geschrieben: der Lake ist wie nach dem vorigen Lauf.
-    assert unpublished_run.state.files == second_run.state.files
+    assert unpublished_run.state.files == month_run.state.files
