@@ -11,14 +11,14 @@ from orchestrator.cli import (
     TIMEOUT,
     Step,
     build_steps,
-    container_engine,
     main,
     new_run_id,
     run_command,
     run_steps,
 )
 
-COMPOSE = ["docker", "compose"]
+# Beliebiger Befehl: Der Orchestrator macht keine Annahmen über die Container-Engine.
+COMPOSE = ["engine", "compose"]
 STEPS = ["build", "ingestion", "silver-job", "gold-job"]
 RUN_ID = "20240401T000000Z-abc123"
 
@@ -36,51 +36,25 @@ class FakeRunner:
 
 
 @pytest.fixture(autouse=True)
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("COMPOSE_CMD", raising=False)
+def compose_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("COMPOSE_CMD", " ".join(COMPOSE))
 
 
 def test_build_steps_order_and_period() -> None:
     steps = build_steps(COMPOSE, "2024Q1", RUN_ID)
     assert [s.name for s in steps] == STEPS
-    assert steps[0].command == ["docker", "compose", "--profile", "jobs", "build"]
-    assert steps[0].cleanup is None
+    assert steps[0].command == [*COMPOSE, "--profile", "jobs", "build"]
     for step in steps[1:]:
-        container = f"taxi-pipeline-{step.name}-{RUN_ID}"
         assert step.command == [
-            "docker",
-            "compose",
+            *COMPOSE,
             "run",
             "--rm",
-            "--name",
-            container,
             "-e",
             f"PIPELINE_RUN_ID={RUN_ID}",
             step.name,
             "--quarter",
             "2024Q1",
         ]
-        assert step.cleanup == ["docker", "rm", "--force", container]
-
-
-def test_build_steps_passes_run_id_with_podman() -> None:
-    steps = build_steps(["podman", "compose"], "2024Q1", RUN_ID)
-    for step in steps[1:]:
-        service = step.command.index(step.name)
-        assert step.command[service - 2 : service] == ["-e", f"PIPELINE_RUN_ID={RUN_ID}"]
-
-
-@pytest.mark.parametrize(
-    ("compose", "engine"),
-    [
-        (["docker", "compose"], "docker"),
-        (["docker-compose"], "docker"),
-        (["podman", "compose"], "podman"),
-        (["podman-compose"], "podman"),
-    ],
-)
-def test_container_engine(compose: list[str], engine: str) -> None:
-    assert container_engine(compose) == engine
 
 
 def test_new_run_id_is_unique_and_sortable() -> None:
@@ -94,29 +68,46 @@ def _report(tmp_path: Path) -> dict[str, Any]:
     return json.loads(report_file.read_text(encoding="utf-8"))
 
 
-def test_compose_defaults_to_docker(tmp_path: Path) -> None:
-    runner = FakeRunner()
-    main(["--quarter", "2024Q1", "--report-dir", str(tmp_path)], runner)
-    assert all(call[:2] == ["docker", "compose"] for call in runner.calls)
-    assert _report(tmp_path)["compose"] == "docker compose"
-
-
 def test_compose_from_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("COMPOSE_CMD", " podman  compose ")
+    monkeypatch.setenv("COMPOSE_CMD", " my-engine  compose ")
     runner = FakeRunner()
     main(["--quarter", "2024Q1", "--report-dir", str(tmp_path)], runner)
-    assert all(call[:2] == ["podman", "compose"] for call in runner.calls)
+    assert all(call[:2] == ["my-engine", "compose"] for call in runner.calls)
+    assert _report(tmp_path)["compose"] == "my-engine compose"
 
 
-def test_compose_flag_overrides_environment(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("COMPOSE_CMD", "docker compose")
+def test_compose_flag_overrides_environment(tmp_path: Path) -> None:
     runner = FakeRunner()
-    argv = ["--quarter", "2024Q1", "--compose", "podman-compose", "--report-dir", str(tmp_path)]
+    argv = ["--quarter", "2024Q1", "--compose", "other-compose", "--report-dir", str(tmp_path)]
     main(argv, runner)
-    assert all(call[0] == "podman-compose" for call in runner.calls)
-    assert _report(tmp_path)["compose"] == "podman-compose"
+    assert all(call[0] == "other-compose" for call in runner.calls)
+    assert _report(tmp_path)["compose"] == "other-compose"
+
+
+@pytest.mark.parametrize(
+    ("env", "flag"),
+    [(None, []), ("  ", []), ("engine compose", ["--compose", ""])],
+    ids=["unset", "blank", "empty-flag"],
+)
+def test_compose_command_is_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    env: str | None,
+    flag: list[str],
+) -> None:
+    if env is None:
+        monkeypatch.delenv("COMPOSE_CMD")
+    else:
+        monkeypatch.setenv("COMPOSE_CMD", env)
+    runner = FakeRunner()
+    with pytest.raises(SystemExit) as exc:
+        main(["--quarter", "2024Q1", "--report-dir", str(tmp_path), *flag], runner)
+
+    assert exc.value.code == 2
+    assert "COMPOSE_CMD" in capsys.readouterr().err
+    assert runner.calls == []
+    assert not list(tmp_path.glob("*.json"))
 
 
 @pytest.mark.parametrize("failed_step", range(len(STEPS)))
@@ -155,46 +146,26 @@ def test_run_command_stops_process_after_timeout() -> None:
 class HangingRunner(FakeRunner):
     """Simuliert einen hängenden Schritt: Der Befehl mit `hang` überschreitet die Frist."""
 
-    def __init__(self, hang: str, cleanup_code: int = 0) -> None:
+    def __init__(self, hang: str) -> None:
         super().__init__()
         self.hang = hang
-        self.cleanup_code = cleanup_code
 
     def __call__(self, command: list[str]) -> int:
         self.calls.append(command)
-        if command[1:3] == ["rm", "--force"]:
-            return self.cleanup_code
         if self.hang in command:
             raise subprocess.TimeoutExpired(command, 1200)
         return 0
 
 
-def test_timeout_stops_pipeline_and_removes_container() -> None:
+def test_timeout_stops_pipeline() -> None:
     steps = build_steps(COMPOSE, "2024Q1", RUN_ID)
     runner = HangingRunner("silver-job")
 
     results = run_steps(steps, runner)
 
     assert [r["step"] for r in results] == ["build", "ingestion", "silver-job"]
-    assert results[-1] == results[-1] | {
-        "status": "timeout",
-        "exit_code": TIMEOUT,
-        "cleanup": "ok",
-    }
-    assert runner.calls[-1] == ["docker", "rm", "--force", f"taxi-pipeline-silver-job-{RUN_ID}"]
-
-
-def test_timeout_reports_failed_cleanup() -> None:
-    steps = build_steps(COMPOSE, "2024Q1", RUN_ID)
-    results = run_steps(steps, HangingRunner("gold-job", cleanup_code=1))
-    assert results[-1]["cleanup"] == "exit_code=1"
-
-
-def test_timeout_without_container_needs_no_cleanup() -> None:
-    runner = HangingRunner("build")
-    results = run_steps([Step("build", ["docker", "compose", "build"])], runner)
-    assert results[-1]["cleanup"] == "not_needed"
-    assert len(runner.calls) == 1
+    assert results[-1] == results[-1] | {"status": "timeout", "exit_code": TIMEOUT}
+    assert runner.calls == [s.command for s in steps[:3]]
 
 
 def test_main_reports_timeout(tmp_path: Path) -> None:

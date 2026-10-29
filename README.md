@@ -48,7 +48,7 @@ cp .env.example .env        # Beispielwerte reichen für eine lokale Demo, sonst
 uv run --project services/orchestrator orchestrator --quarter 2024Q1
 ```
 
-Der [Orchestrator](services/orchestrator/README.md) baut die Images und führt Ingestion, Spark-Job 1 (`silver-job`) und Spark-Job 2 (`gold-job`) nacheinander für das angegebene Quartal aus. Er startet die benötigte Infrastruktur über Compose, bricht beim ersten Fehler ab und schreibt einen Laufbericht nach `runs/`. Standard ist `docker compose`; mit Podman `COMPOSE_CMD="podman compose"` setzen oder `--compose "podman compose"` übergeben. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar.
+Der [Orchestrator](services/orchestrator/README.md) baut die Images und führt Ingestion, Spark-Job 1 (`silver-job`) und Spark-Job 2 (`gold-job`) nacheinander für das angegebene Quartal aus. Er startet die benötigte Infrastruktur über Compose, bricht beim ersten Fehler ab und schreibt einen Laufbericht nach `runs/`. Den Compose-Befehl der eigenen Container-Engine gibt man über `COMPOSE_CMD` oder `--compose` an, z. B. `COMPOSE_CMD="podman compose"`. Einen Standardwert gibt es nicht. Die Spark-UI ist unter `http://127.0.0.1:8080` erreichbar.
 
 Compose definiert die Container, nicht den Ablauf: `compose up` startet nur SeaweedFS, `lake-init` und den Spark-Cluster (Master und zwei Worker). Die drei Datenjobs liegen im Profil `jobs`, hängen nur von dieser Infrastruktur ab und lassen sich einzeln starten; Silver braucht bereits geladene Bronze-Daten, Gold bereits erzeugte Silver-Daten:
 

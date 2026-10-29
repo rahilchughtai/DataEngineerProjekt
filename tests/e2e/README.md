@@ -4,8 +4,7 @@ Ruft den echten [Orchestrator](../../services/orchestrator/README.md) auf (`orch
 
 ```sh
 cp .env.example .env                       # einmalig im Repo-Root
-uv run --directory tests/e2e pytest -v     # Docker
-COMPOSE_CMD="podman compose" uv run --directory tests/e2e pytest -v   # Podman
+COMPOSE_CMD="<compose>" uv run --directory tests/e2e pytest -v   # z. B. "docker compose" oder "podman compose"
 ```
 
 Der Test läuft im eigenen Compose-Projekt `taxi-pipeline-e2e` mit eigenem Volume und eigenen Netzen. Er löscht also nie den lokalen Data Lake. Die Host-Ports sind dieselben wie in der normalen Umgebung, die deshalb vorher gestoppt sein muss. Vor und nach dem Lauf entfernt der Test sein Projekt samt Volume; mit `E2E_KEEP=1` bleibt der Stack zur Fehlersuche stehen. Der Override verkleinert den Spark-Cluster auf einen Worker mit 1 GiB und Executors mit 512 MiB, weil 2.000 Fahrten je Monat nicht mehr brauchen und lokale VMs oft nur 2 GiB RAM haben.

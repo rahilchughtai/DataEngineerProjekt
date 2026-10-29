@@ -7,10 +7,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  COMPOSE_CMD: docker compose
+  UV_VERSION: "0.12.10" # wie in services/ingestion/Dockerfile
+
 jobs:
   unit-tests:
     name: unit-tests (${{ matrix.service }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -31,7 +40,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          version: "0.12.10" # wie im Dockerfile
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: services/${{ matrix.service }}/uv.lock
 
@@ -39,22 +48,29 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pytest
 
-  # Ruff mit der zentralen Konfiguration aus pyproject.toml; die pre-commit-Hooks lassen sich
-  # lokal umgehen. Ohne --fix, damit Abweichungen den Check scheitern lassen.
+  # Alle pre-commit-Hooks (inkl. Ruff mit der zentralen Konfiguration aus pyproject.toml), weil
+  # sie sich lokal umgehen lassen. Ändert ein Hook eine Datei (z. B. ruff --fix), scheitert der
+  # Lauf; --show-diff-on-failure zeigt die nötige Änderung im Log.
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
       - uses: astral-sh/setup-uv@v7
         with:
-          version: "0.12.10"
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      # Hook-Umgebungen, damit pre-commit sie nicht bei jedem Lauf neu installiert.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
       - run: uv sync --frozen
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
 
   # End-to-End-Lauf über den echten Orchestrator mit den echten Images, SeaweedFS und dem
   # Spark-Cluster. Ingestion lädt gekürzte echte TLC-Dateien (tests/e2e/fixtures) von einem
@@ -63,7 +79,7 @@ jobs:
   # Zugriffsrechte und die Run-ID über alle Schichten. Podman deckt er nicht ab.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: tests/e2e
@@ -77,7 +93,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v7
         with:
-          version: "0.12.10"
+          version: ${{ env.UV_VERSION }}
           enable-cache: true
           cache-dependency-glob: |
             tests/e2e/uv.lock
@@ -93,24 +109,23 @@ jobs:
 
       - name: Logs
         if: failure() || cancelled()
-        run: docker compose --profile jobs logs --no-color
+        run: $COMPOSE_CMD --profile jobs logs --no-color
 
       - name: Aufräumen
         if: always()
-        run: docker compose --profile jobs down --volumes --remove-orphans
+        run: $COMPOSE_CMD --profile jobs down --volumes --remove-orphans
 
-  # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit.
+  # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit,
+  # neue Jobs genügt es in needs einzutragen.
   # always(), weil GitHub einen übersprungenen Pflicht-Check als bestanden wertet.
   tests-passed:
     needs: [unit-tests, lint, e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Alle Unit-Tests, Lint und E2E erfolgreich
+      - name: Alle Jobs aus needs erfolgreich
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "unit-tests: ${{ needs.unit-tests.result }}"
-          echo "lint: ${{ needs.lint.result }}"
-          echo "e2e: ${{ needs.e2e.result }}"
-          test "${{ needs.unit-tests.result }}" = "success"
-          test "${{ needs.lint.result }}" = "success"
-          test "${{ needs.e2e.result }}" = "success"
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          jq -e 'all(.[]; .result == "success")' <<< "$NEEDS" > /dev/null

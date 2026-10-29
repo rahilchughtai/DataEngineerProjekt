@@ -23,6 +23,7 @@ from orchestrator import cli as orchestrator
 # Eingaben des Tests: ein Quartal mit Fixtures und eines, für das der Mock nur 403 liefert.
 QUARTER = "2024Q1"
 UNPUBLISHED_QUARTER = "2024Q2"
+STEP_TIMEOUT = "300"
 
 E2E_DIR = Path(__file__).resolve().parent
 COMPOSE_FILES = [ROOT / "docker-compose.yml", E2E_DIR / "compose.e2e.yml"]
@@ -37,11 +38,14 @@ log = logging.getLogger("e2e")
 @pytest.fixture(scope="session")
 def compose() -> Iterator[list[str]]:
     """Compose-Befehl wie beim Orchestrator; alle Aufrufe im Repo-Root mit dem E2E-Override."""
+    command = os.environ.get("COMPOSE_CMD", "").split()
+    if not command:
+        pytest.fail("COMPOSE_CMD fehlt: den Compose-Befehl der eigenen Container-Engine setzen")
     with pytest.MonkeyPatch.context() as patch:
         patch.chdir(ROOT)
         patch.setenv("COMPOSE_FILE", os.pathsep.join(map(str, COMPOSE_FILES)))
         patch.setenv("COMPOSE_ENV_FILES", ",".join(map(str, ENV_FILES)))
-        yield (os.environ.get("COMPOSE_CMD") or orchestrator.DEFAULT_COMPOSE).split()
+        yield command
 
 
 def _compose(command: list[str], *args: str) -> subprocess.CompletedProcess[str]:
@@ -94,7 +98,9 @@ def stack(compose: list[str], settings: Settings) -> Iterator[None]:
 
 def _run(quarter: str, lake: Lake, factory: pytest.TempPathFactory) -> Run:
     report_dir = factory.mktemp(f"runs-{quarter}")
-    code = orchestrator.main(["--quarter", quarter, "--report-dir", str(report_dir)])
+    code = orchestrator.main(
+        ["--quarter", quarter, "--report-dir", str(report_dir), "--step-timeout", STEP_TIMEOUT]
+    )
     (report,) = report_dir.glob("*.json")
     return Run(code, json.loads(report.read_text(encoding="utf-8")), lake.state())
 
