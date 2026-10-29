@@ -78,7 +78,7 @@ services:
       S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
       S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
       BRONZE_BUCKET: bronze
-      TLC_BASE_URL: https://d37ci6vzurychx.cloudfront.net/trip-data
+      TLC_BASE_URL: ${TLC_BASE_URL:?siehe .env.example}
       TLC_DATASET: yellow_tripdata
       INGEST_PERIOD: ${INGEST_PERIOD:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

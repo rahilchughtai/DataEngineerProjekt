@@ -19,7 +19,7 @@ package = false
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["services/*/src"]
+src = ["services/*/src", "tests/e2e"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "UP", "B", "SIM", "N", "RUF", "LOG", "PTH"]

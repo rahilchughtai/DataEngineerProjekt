@@ -1,0 +1,58 @@
+# Override für den End-to-End-Test, nur zusammen mit docker-compose.yml und e2e.env:
+#   COMPOSE_FILE=docker-compose.yml:tests/e2e/compose.e2e.yml   (Windows: ; statt :)
+#   COMPOSE_ENV_FILES=.env,tests/e2e/e2e.env                    (setzt TLC_BASE_URL auf den Mock)
+# Relative Pfade beziehen sich wie in Compose üblich auf das Verzeichnis der ersten Datei
+# (Repo-Root). Der Orchestrator übernimmt beide Variablen unverändert für seine Compose-Aufrufe.
+
+# Eigenes Projekt mit eigenem Volume und eigenen Netzen: ein Testlauf löscht nie den lokalen Data
+# Lake. Die Host-Ports 8333 und 8080 bleiben gleich, die normale Umgebung muss also gestoppt sein.
+name: taxi-pipeline-e2e
+
+services:
+  # Ersetzt CloudFront: liefert die gekürzten echten TLC-Dateien mit ETag und Last-Modified und
+  # antwortet für nicht veröffentlichte Monate wie CloudFront mit 403.
+  tlc-mock:
+    image: docker.io/library/nginx:1.29.1-alpine
+    volumes:
+      - ./tests/e2e/tlc-mock/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tests/e2e/fixtures/trip-data:/srv/trip-data:ro
+    networks: [lakenet]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  ingestion:
+    environment:
+      # Ein nicht veröffentlichter Monat wird nicht wiederholt; kurze Wartezeit für Transienten.
+      DOWNLOAD_BACKOFF_SECONDS: "0.5"
+    depends_on:
+      tlc-mock:
+        condition: service_healthy
+
+  # Kleiner Cluster: 2.000 Fahrten je Monat brauchen keine zwei Worker, und lokale VMs (Podman
+  # Machine) haben oft nur 2 GiB RAM. Die Executor-Grenze muss unter SPARK_WORKER_MEMORY liegen.
+  spark-worker:
+    deploy:
+      replicas: 1
+    environment:
+      SPARK_WORKER_MEMORY: 1g
+
+  silver-job:
+    environment:
+      SPARK_EXECUTOR_MEMORY: 512m
+
+  gold-job:
+    environment:
+      SPARK_EXECUTOR_MEMORY: 512m
+
+networks:
+  lakenet:
+    name: taxi-pipeline-e2e-lakenet
+  sparknet:
+    name: taxi-pipeline-e2e-sparknet
+
+volumes:
+  seaweedfs-data:
+    name: taxi-pipeline-e2e-seaweedfs-data
