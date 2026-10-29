@@ -1,6 +1,7 @@
 import pytest
 
-from ingestion.config import Config, ConfigError
+from ingestion.config import Config
+from pipeline_common.env import ConfigError
 
 REQUIRED = {
     "S3_ENDPOINT": "http://seaweedfs:8333",

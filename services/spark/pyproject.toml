@@ -10,9 +10,13 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "pipeline-common",
     "pyspark==4.1.3", # exakt die Version des Images
     "pytest>=8.4",
 ]
+
+[tool.uv.sources]
+pipeline-common = { path = "../../libs/pipeline_common" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

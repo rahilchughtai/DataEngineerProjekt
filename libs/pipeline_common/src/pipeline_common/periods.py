@@ -1,9 +1,4 @@
-"""Auflösung der zu verarbeitenden Monate (einzeln oder Quartal).
-
-Gleiche Formate wie im Ingestion-Service (services/ingestion/src/ingestion/months.py).
-Bewusst kopiert statt geteilt: jeder Service ist ein eigenständiges Projekt und Image.
-tests/test_periods.py vergleicht beide Fassungen und schlägt bei Abweichungen fehl.
-"""
+"""Auflösung der zu verarbeitenden Monate (einzeln oder Quartal) aus INGEST_PERIOD."""
 
 import os
 import re

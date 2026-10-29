@@ -5,7 +5,7 @@ Ein Image (`localhost/taxi-pipeline/spark:0.1.0`, Basis `apache/spark:4.1.3`) f�
 - **Cluster:** `spark-master` (UI unter `http://127.0.0.1:8080`) und `spark-worker` mit zwei Replikas, skalierbar mit `docker compose up --scale spark-worker=N`. Die Worker bekommen keine S3-Zugangsdaten, die Executors erhalten sie über die Konfiguration des Jobs. Spark blendet sie in der UI aus (`spark.redaction.regex`).
 - **Netze:** Der Master hängt nur im Rechennetz `sparknet`, Worker und Job-Container zusätzlich im Speichernetz `lakenet`. Weil diese Container in zwei Netzen hängen, melden sie dem Master gezielt ihre Adresse in `sparknet` ([bin/master-route-address.sh](bin/master-route-address.sh)).
 - **Restrisiko:** Die Spark-RPC-Schnittstelle des Masters (Port 7077) ist nicht authentifiziert (`spark.authenticate` ist aus). Ein Container in `sparknet` könnte Code auf den Workern ausführen, die auch in `lakenet` hängen. Das begrenzen drei Dinge: In `sparknet` liegen nur Master, Worker und Jobs, die Worker besitzen keine S3-Zugangsdaten, und die Master-UI ist nur an `127.0.0.1` gebunden. Für den lokalen Betrieb ist das gewollt, in einer Cloud wären `spark.authenticate` und TLS Pflicht.
-- **Jobs** laufen im Client-Modus über [bin/submit-job.sh](bin/submit-job.sh): Der Driver läuft im One-Shot-Container, die Executors laufen auf den Workern. Logging und Exit-Codes teilen sich beide Jobs ([runtime.py](src/spark_jobs/runtime.py)), ebenso das partitionsweise Überschreiben ([lake.py](src/spark_jobs/lake.py)).
+- **Jobs** laufen im Client-Modus über [bin/submit-job.sh](bin/submit-job.sh): Der Driver läuft im One-Shot-Container, die Executors laufen auf den Workern. Zeiträume, Run-ID, Logging und Run-Report kommen aus der gemeinsamen Bibliothek [libs/pipeline_common](../../libs/pipeline_common), den Exit-Code bestimmt [runtime.py](src/spark_jobs/runtime.py), ebenso das partitionsweise Überschreiben ([lake.py](src/spark_jobs/lake.py)).
 
 ## Job 1: Bronze → Silver (`silver-job`)
 
@@ -101,9 +101,9 @@ Beide Jobs und der Laufbericht starten über `docker compose up` in der Reihenfo
 Der Code muss zu Python 3.10 passen, der Version im Spark-Image. In CI laufen die Tests über uv mit PySpark 4.1.3 und Java 17. Lokal unter Windows fehlen dafür Java und die Hadoop-Hilfsprogramme. Die Tests laufen deshalb im Spark-Image, das beides mitbringt:
 
 ```sh
-podman run --rm -v "$PWD/services/spark:/work:ro" -w /work -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
+podman run --rm -v "$PWD:/work:ro" -w /work/services/spark -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
   --entrypoint sh docker.io/apache/spark:4.1.3-scala2.13-java17-python3-ubuntu -c \
-  'pip install -q --user pytest && PYTHONPATH=src:/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip python3 -m pytest -p no:cacheprovider'
+  'pip install -q --user pytest && PYTHONPATH=src:/work/libs/pipeline_common/src:/opt/spark/python/lib/pyspark.zip:/opt/spark/python/lib/py4j-0.10.9.9-src.zip python3 -m pytest -p no:cacheprovider'
 ```
 
 Mit installiertem Java 17 (Linux, macOS, WSL) reicht `uv run --directory services/spark pytest`.

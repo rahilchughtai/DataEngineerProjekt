@@ -116,9 +116,9 @@ COMPOSE_CMD="docker compose" uv run --directory tests/e2e pytest -v   # End-to-E
 
 Die Spark-Tests brauchen Java 17; unter Windows laufen sie im Spark-Image (Befehl in [services/spark/README.md](services/spark/README.md#tests)).
 
-Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) läuft bei jedem Pull Request:
+Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; Code, den mehrere Services brauchen (Zeiträume, Run-ID, Umgebung, Logging, Run-Reports), liegt in der Bibliothek [libs/pipeline_common](libs/pipeline_common/README.md) und wird beim Bau ins Image kopiert, deshalb ist der Build-Kontext der Services das Repo-Root; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) läuft bei jedem Pull Request:
 
-- `unit-tests`: die Unit-Tests, ein Matrix-Job pro Service.
+- `unit-tests`: die Unit-Tests, ein Matrix-Job pro Service und für die Bibliothek.
 - `lint`: `ruff check` und `ruff format --check`.
 - `e2e`: der [End-to-End-Test](tests/e2e/README.md). Er startet die Pipeline mit `docker compose up` über die echten Images, SeaweedFS und den Spark-Cluster; die Ingestion lädt gekürzte echte TLC-Dateien aus dem Repository von einem Mock-Server. Geprüft werden ein Quartal durch alle Schichten, der Laufbericht, die Wiederholung, ein einzelner Monat, ein nicht veröffentlichtes Quartal und die Zugriffsrechte.
 

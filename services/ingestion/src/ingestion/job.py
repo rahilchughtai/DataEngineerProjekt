@@ -1,9 +1,6 @@
 """Einstieg des Ingestion-Service: lädt die Monate aus INGEST_PERIOD nach Bronze."""
 
 import logging
-import os
-import re
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -12,25 +9,14 @@ from typing import Any
 import requests
 
 from ingestion import storage
-from ingestion.config import Config, ConfigError
-from ingestion.download import InvalidFileError, NotPublishedError, download, fetch_source_info
-from ingestion.months import Month, months_from_env
+from ingestion.config import Config
+from ingestion.download import NotPublishedError, download, fetch_source_info
+from pipeline_common.logs import setup_logging
+from pipeline_common.periods import Month, months_from_env
+from pipeline_common.reports import exit_code, run_report
+from pipeline_common.run_id import read_run_id
 
 log = logging.getLogger("ingestion")
-
-RUN_ID_FILE_ENV = "PIPELINE_RUN_ID_FILE"
-RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
-
-
-def _setup_logging() -> None:
-    logging.basicConfig(
-        level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S%z",
-        stream=sys.stdout,
-    )
-    logging.getLogger("botocore").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 def ingest_month(month: Month, cfg: Config, session: requests.Session, s3: Any) -> dict[str, Any]:
@@ -71,29 +57,13 @@ def ingest_month(month: Month, cfg: Config, session: requests.Session, s3: Any) 
     }
 
 
-def read_run_id() -> str:
-    """Run-ID des Laufs aus der Datei, die run-init schreibt (PIPELINE_RUN_ID_FILE)."""
-    path = os.environ.get(RUN_ID_FILE_ENV, "").strip()
-    if not path:
-        raise ValueError(f"Umgebungsvariable {RUN_ID_FILE_ENV} fehlt (Run-ID von run-init)")
-    try:
-        run_id = Path(path).read_text(encoding="utf-8").strip()
-    except OSError as err:
-        raise ValueError(f"{RUN_ID_FILE_ENV}: {path} nicht lesbar ({err})") from err
-    if not RUN_ID_PATTERN.fullmatch(run_id):
-        raise ValueError(
-            f"Ungültige Run-ID {run_id!r} in {path}, erwartet YYYYMMDDTHHMMSSZ-xxxxxx (hex)"
-        )
-    return run_id
-
-
 def main() -> int:
-    _setup_logging()
+    setup_logging(quiet=("botocore", "urllib3"))
     try:
         months = months_from_env()
         cfg = Config.from_env()
         run_id = read_run_id()
-    except (ValueError, ConfigError) as err:
+    except ValueError as err:
         log.error("%s", err)
         return 2
 
@@ -111,35 +81,14 @@ def main() -> int:
             except NotPublishedError as err:
                 log.warning("month=%s status=not_published %s", month, err)
                 results.append({"month": str(month), "status": "not_published"})
-            except (InvalidFileError, requests.RequestException, OSError) as err:
-                log.error("month=%s status=failed %s", month, err)
-                results.append({"month": str(month), "status": "failed", "error": str(err)})
             except Exception as err:
                 log.exception("month=%s status=failed", month)
                 results.append({"month": str(month), "status": "failed", "error": str(err)})
 
-    counts: dict[str, int] = {}
-    for r in results:
-        counts[r["status"]] = counts.get(r["status"], 0) + 1
-    report = {
-        "run_id": run_id,
-        "dataset": cfg.dataset,
-        "seconds": round(time.monotonic() - started, 2),
-        "counts": counts,
-        "months": results,
-    }
+    report = run_report(run_id, cfg.dataset, started, results)
+    counts = report["counts"]
     report_key = storage.write_run_report(s3, cfg.bronze_bucket, cfg.dataset, report)
     log.info(
         "run=%s finished counts=%s report=s3://%s/%s", run_id, counts, cfg.bronze_bucket, report_key
     )
-    return exit_code(counts)
-
-
-def exit_code(counts: dict[str, int]) -> int:
-    """1 bei fehlgeschlagenen Monaten, 3 wenn ein Monat noch nicht veröffentlicht ist, sonst 0."""
-    if counts.get("failed"):
-        return 1
-    # Wie silver-job: ein unvollständiger Zeitraum hält die Pipeline schon hier an.
-    if counts.get("not_published"):
-        return 3
-    return 0
+    return exit_code(counts, "not_published")

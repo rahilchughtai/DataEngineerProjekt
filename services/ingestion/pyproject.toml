@@ -5,18 +5,19 @@ description = "Lädt NYC-TLC-Monatsdateien und legt sie unverändert in der Bron
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "boto3>=1.35",
+    "pipeline-common",
     "requests>=2.32",
     "tenacity>=9.0",
 ]
-
-[project.scripts]
-ingestion = "ingestion.cli:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.4",
     "responses>=0.25",
 ]
+
+[tool.uv.sources]
+pipeline-common = { path = "../../libs/pipeline_common" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

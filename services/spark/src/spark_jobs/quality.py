@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 
-from spark_jobs.periods import Month
+from pipeline_common.periods import Month
 
 MAX_DURATION_SECONDS = 24 * 3600
 MAX_TRIP_DISTANCE_MILES = 200.0

@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pyspark.sql import DataFrame
 
-from spark_jobs.periods import Month
+from pipeline_common.periods import Month
 from spark_jobs.quality import classify
 from spark_jobs.schema import harmonize
 

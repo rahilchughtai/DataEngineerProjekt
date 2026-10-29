@@ -8,9 +8,9 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from pipeline_common.periods import Month
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
-from spark_jobs.periods import Month
 from spark_jobs.silver_to_gold import (
     add_calendar_features,
     aggregate,

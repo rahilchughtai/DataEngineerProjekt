@@ -1,6 +1,12 @@
 import pytest
 
-from ingestion.months import Month, months_from_env, parse_month, parse_period, quarter_months
+from pipeline_common.periods import (
+    Month,
+    months_from_env,
+    parse_month,
+    parse_period,
+    quarter_months,
+)
 
 
 def test_parse_month() -> None:

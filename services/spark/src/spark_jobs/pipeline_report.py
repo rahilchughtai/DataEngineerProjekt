@@ -14,11 +14,12 @@ from typing import Any
 
 from pyspark.sql import SparkSession
 
+from pipeline_common.logs import setup_logging
+from pipeline_common.periods import parse_period, period_from_env
+from pipeline_common.run_id import read_run_id
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
-from spark_jobs.periods import parse_period, period_from_env
-from spark_jobs.runtime import read_run_id, setup_logging
-from spark_jobs.session import ConfigError, build_session
+from spark_jobs.session import build_session
 
 log = logging.getLogger("pipeline_report")
 
@@ -76,14 +77,14 @@ def run(spark: SparkSession, paths: LakePaths, run_id: str, period: str) -> dict
 
 
 def main() -> int:
-    setup_logging()
+    setup_logging(quiet=("py4j",))
     try:
         period = period_from_env()
         parse_period(period)
         paths = LakePaths.from_env()
         run_id = read_run_id()
         spark = build_session("pipeline_report")
-    except (ValueError, ConfigError) as err:
+    except ValueError as err:
         log.error("%s", err)
         return 2
 
