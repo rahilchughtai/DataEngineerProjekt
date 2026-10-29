@@ -10,7 +10,9 @@ class ConfigError(ValueError):
 def required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
-        raise ConfigError(f"Umgebungsvariable {name} fehlt (siehe .env.example)")
+        raise ConfigError(
+            f"Umgebungsvariable {name} fehlt (siehe .env.example und docker-compose.yml)"
+        )
     return value
 
 

@@ -20,12 +20,11 @@ from pyspark.sql import functions as F
 
 from pipeline_common.logs import setup_logging
 from pipeline_common.periods import Month, months_from_env
-from pipeline_common.reports import run_report
+from pipeline_common.reports import exit_code, run_report
 from pipeline_common.run_id import read_run_id
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.quality import RULE_NAMES, classify
-from spark_jobs.runtime import exit_code
 from spark_jobs.schema import harmonize
 from spark_jobs.session import build_session
 
@@ -190,7 +189,7 @@ def main() -> int:
         report = run(spark, months, paths, run_id)
     finally:
         spark.stop()
-    return exit_code(report, "Bronze")
+    return exit_code(report["counts"], "missing")
 
 
 if __name__ == "__main__":

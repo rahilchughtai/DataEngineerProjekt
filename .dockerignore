@@ -1,10 +1,6 @@
-.git
-.env
-.venv/
+*
+!libs/
+!services/
 **/.venv/
 **/__pycache__/
-**/*.pyc
-documents/
-figures/
 **/tests/
-runs/

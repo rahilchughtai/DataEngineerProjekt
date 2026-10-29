@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from spark_jobs.runtime import exit_code
+LAKE_ENV = {
+    "BRONZE_BUCKET": "bronze",
+    "SILVER_BUCKET": "silver",
+    "GOLD_BUCKET": "gold",
+    "TLC_DATASET": "yellow_tripdata",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +22,8 @@ def test_main_rejects_invalid_run_id_before_spark_starts(
 ) -> None:
     module = importlib.import_module(f"spark_jobs.{job}")
     monkeypatch.setenv("INGEST_PERIOD", "2024-01")
+    for name, value in LAKE_ENV.items():
+        monkeypatch.setenv(name, value)
     (tmp_path / "run-id").write_text("kaputt", encoding="utf-8")
     monkeypatch.setenv("PIPELINE_RUN_ID_FILE", str(tmp_path / "run-id"))
 
@@ -25,18 +32,3 @@ def test_main_rejects_invalid_run_id_before_spark_starts(
 
     monkeypatch.setattr(module, "build_session", no_session)
     assert module.main() == 2
-
-
-@pytest.mark.parametrize(
-    ("counts", "expected"),
-    [
-        ({"processed": 3}, 0),
-        ({"processed": 2, "missing": 1}, 3),
-        ({"missing": 3}, 3),
-        ({}, 3),
-        ({"processed": 2, "failed": 1}, 1),
-        ({"failed": 1}, 1),
-    ],
-)
-def test_exit_code(counts: dict[str, int], expected: int) -> None:
-    assert exit_code({"counts": counts}, "Bronze") == expected

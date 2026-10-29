@@ -20,13 +20,10 @@ LOCATION_ID_RANGE = (1, 265)
 
 
 def month_bounds(month: Month) -> tuple[Column, Column]:
-    start = f"{month.year:04d}-{month.month:02d}-01 00:00:00"
-    nxt = (
-        f"{month.year + 1:04d}-01-01 00:00:00"
-        if month.month == 12
-        else f"{month.year:04d}-{month.month + 1:02d}-01 00:00:00"
-    )
-    return F.lit(start).cast("timestamp_ntz"), F.lit(nxt).cast("timestamp_ntz")
+    def first_instant(m: Month) -> Column:
+        return F.lit(f"{m}-01 00:00:00").cast("timestamp_ntz")
+
+    return first_instant(month), first_instant(month.next())
 
 
 def _duration_seconds() -> Column:

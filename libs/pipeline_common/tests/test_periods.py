@@ -29,6 +29,14 @@ def test_month_str_is_zero_padded() -> None:
 
 
 @pytest.mark.parametrize(
+    ("month", "expected"),
+    [(Month(2024, 1), Month(2024, 2)), (Month(2024, 12), Month(2025, 1))],
+)
+def test_next_month(month: Month, expected: Month) -> None:
+    assert month.next() == expected
+
+
+@pytest.mark.parametrize(
     ("value", "first", "last"),
     [
         ("2024Q1", 1, 3),
@@ -87,5 +95,5 @@ def test_period_is_required(monkeypatch: pytest.MonkeyPatch, value: str | None) 
     monkeypatch.delenv("INGEST_PERIOD", raising=False)
     if value is not None:
         monkeypatch.setenv("INGEST_PERIOD", value)
-    with pytest.raises(ValueError, match="Kein Zeitraum"):
+    with pytest.raises(ValueError, match="INGEST_PERIOD fehlt"):
         months_from_env()

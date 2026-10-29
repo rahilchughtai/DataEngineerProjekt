@@ -8,11 +8,11 @@ REQUIRED = {
     "S3_INGESTION_ACCESS_KEY": "key",
     "S3_INGESTION_SECRET_KEY": "secret",
     "TLC_BASE_URL": "https://tlc.test/trip-data",
+    "BRONZE_BUCKET": "bronze",
+    "TLC_DATASET": "yellow_tripdata",
 }
 OPTIONAL = [
     "S3_REGION",
-    "BRONZE_BUCKET",
-    "TLC_DATASET",
     "DOWNLOAD_MAX_ATTEMPTS",
     "DOWNLOAD_BACKOFF_SECONDS",
     "DOWNLOAD_TIMEOUT_SECONDS",

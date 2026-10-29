@@ -17,11 +17,11 @@ Der Service ist der erste Schritt von `docker compose up` und startet, sobald `l
 |---|---|---|
 | `S3_ENDPOINT` | – | S3-Endpoint von SeaweedFS |
 | `S3_INGESTION_ACCESS_KEY` / `S3_INGESTION_SECRET_KEY` | – | eigene Identität, darf nur `bronze` |
-| `BRONZE_BUCKET` | `bronze` | Ziel-Bucket |
+| `BRONZE_BUCKET` | – | Ziel-Bucket, Pflicht, in Compose fest `bronze` |
 | `INGEST_PERIOD` | – | Zeitraum des Laufs (`YYYYQn` oder `YYYY-MM`), Pflicht |
 | `PIPELINE_RUN_ID_FILE` | – | Datei mit der Run-ID des Laufs, Pflicht, in Compose `/run/pipeline/run-id` |
 | `TLC_BASE_URL` | – | Quelle der Monatsdateien, aus `.env` (siehe `.env.example`) |
-| `TLC_DATASET` | `yellow_tripdata` | Dateipräfix; in Compose fest, weil Spark-Job 1 nur das Yellow-Schema kennt |
+| `TLC_DATASET` | – | Dateipräfix, Pflicht; in Compose fest `yellow_tripdata`, weil Spark-Job 1 nur das Yellow-Schema kennt |
 | `DOWNLOAD_MAX_ATTEMPTS` | `5` | Versuche pro Anfrage |
 | `DOWNLOAD_BACKOFF_SECONDS` | `2` | Basis des exponentiellen Backoffs |
 | `DOWNLOAD_TIMEOUT_SECONDS` | `60` | Timeout pro Anfrage |

@@ -1,8 +1,9 @@
 """Run-ID des Laufs, die run-init in eine Datei im Volume pipeline-run schreibt."""
 
-import os
 import re
 from pathlib import Path
+
+from pipeline_common.env import required
 
 RUN_ID_FILE_ENV = "PIPELINE_RUN_ID_FILE"
 RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
@@ -10,9 +11,7 @@ RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
 
 def read_run_id() -> str:
     """Run-ID des Laufs aus der Datei, die run-init schreibt (PIPELINE_RUN_ID_FILE)."""
-    path = os.environ.get(RUN_ID_FILE_ENV, "").strip()
-    if not path:
-        raise ValueError(f"Umgebungsvariable {RUN_ID_FILE_ENV} fehlt (Run-ID von run-init)")
+    path = required(RUN_ID_FILE_ENV)
     try:
         run_id = Path(path).read_text(encoding="utf-8").strip()
     except OSError as err:
