@@ -100,7 +100,8 @@ services:
 
   ingestion:
     build:
-      context: ./services/ingestion
+      context: .
+      dockerfile: services/ingestion/Dockerfile
     image: localhost/taxi-pipeline/ingestion:0.1.0
     # Nur die eigene Identität: Least Privilege, kein Zugriff auf silver/gold.
     environment:
@@ -126,7 +127,8 @@ services:
 
   spark-master:
     build:
-      context: ./services/spark
+      context: .
+      dockerfile: services/spark/Dockerfile
     image: localhost/taxi-pipeline/spark:0.1.0
     command:
       - /opt/spark/bin/spark-class

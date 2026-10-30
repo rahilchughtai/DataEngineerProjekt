@@ -18,13 +18,15 @@ from typing import Any
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from pipeline_common.logs import setup_logging
+from pipeline_common.periods import Month, months_from_env
+from pipeline_common.reports import exit_code, run_report
+from pipeline_common.run_id import read_run_id
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
-from spark_jobs.periods import Month, months_from_env
 from spark_jobs.quality import RULE_NAMES, classify
-from spark_jobs.runtime import exit_code, read_run_id, setup_logging
 from spark_jobs.schema import harmonize
-from spark_jobs.session import ConfigError, build_session
+from spark_jobs.session import build_session
 
 log = logging.getLogger("bronze_to_silver")
 
@@ -163,17 +165,8 @@ def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str)
     for month in months:
         results.append(process_month(spark, month, paths, run_id))
 
-    counts: dict[str, int] = {}
-    for r in results:
-        counts[r["status"]] = counts.get(r["status"], 0) + 1
-    report = {
-        "run_id": run_id,
-        "job": "bronze_to_silver",
-        "dataset": paths.dataset,
-        "seconds": round(time.monotonic() - started, 2),
-        "counts": counts,
-        "months": results,
-    }
+    report = run_report(run_id, paths.dataset, started, results, job="bronze_to_silver")
+    counts = report["counts"]
     report_path = paths.run_report(run_id)
     lake.write_text(spark, report_path, json.dumps(report, indent=2))
     log.info("run=%s finished counts=%s report=%s", run_id, counts, report_path)
@@ -181,13 +174,13 @@ def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str)
 
 
 def main() -> int:
-    setup_logging()
+    setup_logging(quiet=("py4j",))
     try:
         months = months_from_env()
         paths = LakePaths.from_env()
         run_id = read_run_id()
         spark = build_session("bronze_to_silver")
-    except (ValueError, ConfigError) as err:
+    except ValueError as err:
         log.error("%s", err)
         return 2
 
@@ -196,7 +189,7 @@ def main() -> int:
         report = run(spark, months, paths, run_id)
     finally:
         spark.stop()
-    return exit_code(report, "Bronze")
+    return exit_code(report["counts"], "missing")
 
 
 if __name__ == "__main__":

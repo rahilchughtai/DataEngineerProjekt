@@ -17,22 +17,22 @@ env:
 
 jobs:
   unit-tests:
-    name: unit-tests (${{ matrix.service }})
+    name: unit-tests (${{ matrix.project }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        # Jeder Service ist ein eigenes uv-Projekt mit eigenem tests/-Verzeichnis.
-        service: [ingestion, spark]
+        # Jedes Projekt (Service oder Bibliothek) ist ein eigenes uv-Projekt mit eigenem tests/.
+        project: [services/ingestion, services/spark, libs/pipeline_common]
     defaults:
       run:
-        working-directory: services/${{ matrix.service }}
+        working-directory: ${{ matrix.project }}
     steps:
       - uses: actions/checkout@v5
 
       # PySpark braucht eine JVM; Spark 4 setzt Java 17 voraus (wie im Spark-Image).
-      - if: matrix.service == 'spark'
+      - if: matrix.project == 'services/spark'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -42,7 +42,7 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: true
-          cache-dependency-glob: services/${{ matrix.service }}/uv.lock
+          cache-dependency-glob: ${{ matrix.project }}/uv.lock
 
       # --frozen bricht ab, wenn uv.lock nicht zu pyproject.toml passt.
       - run: uv sync --frozen

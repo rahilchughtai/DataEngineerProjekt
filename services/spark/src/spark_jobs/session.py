@@ -4,28 +4,17 @@ Die Zugangsdaten setzt nur der Driver. Die Executors erhalten sie über die Hado
 des Jobs, deshalb brauchen die Worker-Container selbst keine S3-Credentials.
 """
 
-import os
-
 from pyspark.sql import SparkSession
 
-
-class ConfigError(ValueError):
-    pass
-
-
-def _required(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise ConfigError(f"Umgebungsvariable {name} fehlt (siehe .env.example)")
-    return value
+from pipeline_common.env import optional, required
 
 
 def s3_conf() -> dict[str, str]:
     return {
-        "spark.hadoop.fs.s3a.endpoint": _required("S3_ENDPOINT"),
-        "spark.hadoop.fs.s3a.endpoint.region": os.environ.get("S3_REGION", "us-east-1"),
-        "spark.hadoop.fs.s3a.access.key": _required("S3_SPARK_ACCESS_KEY"),
-        "spark.hadoop.fs.s3a.secret.key": _required("S3_SPARK_SECRET_KEY"),
+        "spark.hadoop.fs.s3a.endpoint": required("S3_ENDPOINT"),
+        "spark.hadoop.fs.s3a.endpoint.region": optional("S3_REGION", "us-east-1"),
+        "spark.hadoop.fs.s3a.access.key": required("S3_SPARK_ACCESS_KEY"),
+        "spark.hadoop.fs.s3a.secret.key": required("S3_SPARK_SECRET_KEY"),
     }
 
 

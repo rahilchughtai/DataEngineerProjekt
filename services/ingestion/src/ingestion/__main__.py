@@ -1,5 +1,5 @@
 import sys
 
-from ingestion.cli import main
+from ingestion.job import main
 
 sys.exit(main())

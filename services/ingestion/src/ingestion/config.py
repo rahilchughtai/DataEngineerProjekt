@@ -1,18 +1,8 @@
 """Konfiguration aus Umgebungsvariablen."""
 
-import os
 from dataclasses import dataclass
 
-
-class ConfigError(ValueError):
-    pass
-
-
-def _required(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise ConfigError(f"Umgebungsvariable {name} fehlt (siehe .env.example)")
-    return value
+from pipeline_common.env import optional, required
 
 
 @dataclass(frozen=True)
@@ -31,14 +21,14 @@ class Config:
     @classmethod
     def from_env(cls) -> "Config":
         return cls(
-            s3_endpoint=_required("S3_ENDPOINT"),
-            s3_access_key=_required("S3_INGESTION_ACCESS_KEY"),
-            s3_secret_key=_required("S3_INGESTION_SECRET_KEY"),
-            s3_region=os.environ.get("S3_REGION", "us-east-1"),
-            bronze_bucket=os.environ.get("BRONZE_BUCKET", "bronze"),
-            base_url=_required("TLC_BASE_URL").rstrip("/"),
-            dataset=os.environ.get("TLC_DATASET", "yellow_tripdata"),
-            max_attempts=int(os.environ.get("DOWNLOAD_MAX_ATTEMPTS", "5")),
-            backoff_seconds=float(os.environ.get("DOWNLOAD_BACKOFF_SECONDS", "2")),
-            timeout_seconds=float(os.environ.get("DOWNLOAD_TIMEOUT_SECONDS", "60")),
+            s3_endpoint=required("S3_ENDPOINT"),
+            s3_access_key=required("S3_INGESTION_ACCESS_KEY"),
+            s3_secret_key=required("S3_INGESTION_SECRET_KEY"),
+            s3_region=optional("S3_REGION", "us-east-1"),
+            bronze_bucket=required("BRONZE_BUCKET"),
+            base_url=required("TLC_BASE_URL").rstrip("/"),
+            dataset=required("TLC_DATASET"),
+            max_attempts=int(optional("DOWNLOAD_MAX_ATTEMPTS", "5")),
+            backoff_seconds=float(optional("DOWNLOAD_BACKOFF_SECONDS", "2")),
+            timeout_seconds=float(optional("DOWNLOAD_TIMEOUT_SECONDS", "60")),
         )

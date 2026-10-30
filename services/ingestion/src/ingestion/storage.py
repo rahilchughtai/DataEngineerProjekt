@@ -10,7 +10,7 @@ from botocore.exceptions import ClientError
 
 from ingestion.config import Config
 from ingestion.download import DownloadResult, SourceInfo
-from ingestion.months import Month
+from pipeline_common.periods import Month
 
 PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 

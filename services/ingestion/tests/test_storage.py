@@ -7,7 +7,7 @@ from botocore.exceptions import ClientError
 
 from ingestion import storage
 from ingestion.download import DownloadResult, SourceInfo
-from ingestion.months import Month
+from pipeline_common.periods import Month
 
 SOURCE = SourceInfo(
     url="https://example.test/yellow_tripdata_2024-01.parquet",

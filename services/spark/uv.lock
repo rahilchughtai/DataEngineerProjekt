@@ -42,6 +42,16 @@ wheels = [
 ]
 
 [[package]]
+name = "pipeline-common"
+version = "0.1.0"
+source = { directory = "../../libs/pipeline_common" }
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.4" }]
+
+[[package]]
 name = "pluggy"
 version = "1.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -99,6 +109,9 @@ wheels = [
 name = "spark-jobs"
 version = "0.1.0"
 source = { editable = "." }
+dependencies = [
+    { name = "pipeline-common" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -107,6 +120,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "pipeline-common", directory = "../../libs/pipeline_common" }]
 
 [package.metadata.requires-dev]
 dev = [

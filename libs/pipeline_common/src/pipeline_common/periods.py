@@ -1,13 +1,9 @@
-"""Auflösung der zu verarbeitenden Monate (einzeln oder Quartal).
+"""Auflösung der zu verarbeitenden Monate (einzeln oder Quartal) aus INGEST_PERIOD."""
 
-Gleiche Formate wie im Ingestion-Service (services/ingestion/src/ingestion/months.py).
-Bewusst kopiert statt geteilt: jeder Service ist ein eigenständiges Projekt und Image.
-tests/test_periods.py vergleicht beide Fassungen und schlägt bei Abweichungen fehl.
-"""
-
-import os
 import re
 from dataclasses import dataclass
+
+from pipeline_common.env import required
 
 _MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
 _QUARTER_RE = re.compile(r"^(\d{4})-?Q([1-4])$", re.IGNORECASE)
@@ -24,6 +20,11 @@ class Month:
 
     def __str__(self) -> str:
         return f"{self.year:04d}-{self.month:02d}"
+
+    def next(self) -> "Month":
+        if self.month == 12:
+            return Month(self.year + 1, 1)
+        return Month(self.year, self.month + 1)
 
 
 def parse_month(value: str) -> Month:
@@ -53,10 +54,7 @@ def parse_period(value: str) -> list[Month]:
 
 def period_from_env() -> str:
     """Zeitraum des Laufs aus INGEST_PERIOD, wie ihn Compose aus .env setzt."""
-    period = os.environ.get("INGEST_PERIOD", "").strip()
-    if not period:
-        raise ValueError("Kein Zeitraum angegeben (INGEST_PERIOD, siehe .env.example)")
-    return period
+    return required("INGEST_PERIOD")
 
 
 def months_from_env() -> list[Month]:

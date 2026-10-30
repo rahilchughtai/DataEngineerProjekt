@@ -17,9 +17,15 @@ RUN cd /opt/spark/jars \
  && echo "d2d24e6b715b5656b9d238bf13b6682a07e2004dd36aad74a73aeb854319f4d9  hadoop-aws-$HADOOP_AWS_VERSION.jar" | sha256sum -c - \
  && echo "62638f33045690c6bc5e496b54b0b2e89a9ad38cbedacdf6e017fea6bc85f55c  bundle-$AWS_SDK_VERSION.jar" | sha256sum -c -
 
-COPY conf/ /opt/spark/conf/
-COPY --chmod=755 bin/ /usr/local/bin/
-COPY src/spark_jobs /opt/spark-jobs/spark_jobs
+# Build-Kontext ist das Repo-Root, damit die gemeinsame Bibliothek ins Image kommt. Sie wird wie in
+# Ingestion als Paket installiert, hier per pip ins Python des Images. spark_jobs bleibt Quellcode
+# auf dem PYTHONPATH, weil spark-submit die Jobs als Dateipfad startet.
+COPY libs/pipeline_common/pyproject.toml /tmp/pipeline_common/
+COPY libs/pipeline_common/src /tmp/pipeline_common/src
+RUN pip install --no-cache-dir --no-deps /tmp/pipeline_common && rm -rf /tmp/pipeline_common
+COPY services/spark/conf/ /opt/spark/conf/
+COPY --chmod=755 services/spark/bin/ /usr/local/bin/
+COPY services/spark/src/spark_jobs /opt/spark-jobs/spark_jobs
 
 # Das Basisimage läuft bereits als unprivilegierter Nutzer spark (uid 185).
 USER spark

@@ -1,6 +1,12 @@
 import pytest
 
-from ingestion.months import Month, months_from_env, parse_month, parse_period, quarter_months
+from pipeline_common.periods import (
+    Month,
+    months_from_env,
+    parse_month,
+    parse_period,
+    quarter_months,
+)
 
 
 def test_parse_month() -> None:
@@ -20,6 +26,14 @@ def test_month_validates_range() -> None:
 
 def test_month_str_is_zero_padded() -> None:
     assert str(Month(2024, 1)) == "2024-01"
+
+
+@pytest.mark.parametrize(
+    ("month", "expected"),
+    [(Month(2024, 1), Month(2024, 2)), (Month(2024, 12), Month(2025, 1))],
+)
+def test_next_month(month: Month, expected: Month) -> None:
+    assert month.next() == expected
 
 
 @pytest.mark.parametrize(
@@ -81,5 +95,5 @@ def test_period_is_required(monkeypatch: pytest.MonkeyPatch, value: str | None) 
     monkeypatch.delenv("INGEST_PERIOD", raising=False)
     if value is not None:
         monkeypatch.setenv("INGEST_PERIOD", value)
-    with pytest.raises(ValueError, match="Kein Zeitraum"):
+    with pytest.raises(ValueError, match="INGEST_PERIOD fehlt"):
         months_from_env()

@@ -8,10 +8,10 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
+from pipeline_common.periods import Month
 from spark_jobs import lake
 from spark_jobs.bronze_to_silver import files_for, process_month, run
 from spark_jobs.lake import LakePaths
-from spark_jobs.periods import Month
 
 JANUARY = Month(2024, 1)
 FEBRUARY = Month(2024, 2)

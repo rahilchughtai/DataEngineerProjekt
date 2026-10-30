@@ -116,10 +116,54 @@ COMPOSE_CMD="docker compose" uv run --directory tests/e2e pytest -v   # End-to-E
 
 Die Spark-Tests brauchen Java 17; unter Windows laufen sie im Spark-Image (Befehl in [services/spark/README.md](services/spark/README.md#tests)).
 
-Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) läuft bei jedem Pull Request:
+Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; Code, den mehrere Services brauchen (Zeiträume, Run-ID, Umgebung, Logging, Run-Reports), liegt in der Bibliothek [libs/pipeline_common](libs/pipeline_common/README.md) und wird beim Bau ins Image kopiert, deshalb ist der Build-Kontext der Services das Repo-Root; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) läuft bei jedem Pull Request:
 
-- `unit-tests`: die Unit-Tests, ein Matrix-Job pro Service.
+- `unit-tests`: die Unit-Tests, ein Matrix-Job pro Service und für die Bibliothek.
 - `lint`: `ruff check` und `ruff format --check`.
 - `e2e`: der [End-to-End-Test](tests/e2e/README.md). Er startet die Pipeline mit `docker compose up` über die echten Images, SeaweedFS und den Spark-Cluster; die Ingestion lädt gekürzte echte TLC-Dateien aus dem Repository von einem Mock-Server. Geprüft werden ein Quartal durch alle Schichten, der Laufbericht, die Wiederholung, ein einzelner Monat, ein nicht veröffentlichtes Quartal und die Zugriffsrechte.
 
 Der abschließende Job `tests-passed` ist nur grün, wenn Unit-Tests, Lint und der End-to-End-Test erfolgreich waren; er ist der Pflicht-Check für Merges nach `develop`. Weil der End-to-End-Test die Images baut, blockiert ein Ausfall von Docker Hub oder Maven Central auch den Merge.
+
+## Troubleshooting
+
+### Podman unter Windows: veröffentlichte Ports sind vom Host nicht erreichbar
+
+Die Pipeline läuft durch, aber `http://127.0.0.1:8333` (SeaweedFS) und `http://127.0.0.1:8080` (Spark-UI) verweigern unter Windows die Verbindung; der End-to-End-Test scheitert dann mit `EndpointConnectionError`. In der Machine selbst antwortet der Port (`podman machine ssh curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8333/healthz` liefert `200`).
+
+Ursache ist ein bekannter Fehler im Zusammenspiel von Podman 6 und der WSL-Weiterleitung im NAT-Modus ([microsoft/WSL#41204](https://github.com/microsoft/WSL/issues/41204)): Podman 6 reserviert veröffentlichte Ports nur per `bind()`, WSL leitet aber nur TCP-Sockets im Listen-Zustand nach Windows weiter. Neuere Images von `podman machine` bringen dafür eine Konfiguration mit ([podman-machine-os](https://github.com/podman-container-tools/podman-machine-os/blob/main/podman-image/999-podman-machine-wsl-rootful.conf)), ältere Machines nicht. `podman machine set --user-mode-networking=true` hilft nicht.
+
+Abhilfe für eine rootful Machine (`podman machine inspect --format "{{.Rootful}}"` zeigt `true`): dieselbe Konfiguration in der Machine anlegen. Sie liegt im Dateisystem der Machine und übersteht Neustarts; nach einem `podman machine rm` und `init` ist sie neu anzulegen, sofern das neue Image sie nicht schon enthält.
+
+```sh
+podman machine ssh
+mkdir -p /etc/containers/containers.rootful.conf.d
+cat > /etc/containers/containers.rootful.conf.d/999-wsl-port-forwarding.conf <<'CONF'
+[engine]
+force_port_listen = true
+
+[network]
+default_host_ips = ["0.0.0.0"]
+CONF
+exit
+podman machine stop
+podman machine start
+```
+
+Nicht `/etc/containers/containers.conf.d/` verwenden: Das Verzeichnis ist mit `%APPDATA%\containers\containers.conf.d` unter Windows verbunden, dort liest auch der Podman-Client die Dateien. Für eine rootless Machine gilt die [rootless-Variante](https://github.com/podman-container-tools/podman-machine-os/blob/main/podman-image/999-podman-machine-wsl-rootless.conf) unter `/etc/containers/containers.rootless.conf.d/`.
+
+### Podman unter Windows: `failed to connect to the docker API at npipe`
+
+`podman compose` bricht sofort mit `failed to connect to the docker API at npipe:////./pipe/podman-machine-default ... The system cannot find the file specified` ab, während `podman run` und `podman ps` funktionieren. Das tritt typischerweise auf, nachdem Windows neu gestartet oder heruntergefahren wurde, während die Machine lief. `podman machine start` meldet dabei `win-sshproxy.exe failed to start, exit code: 0` und trotzdem Erfolg.
+
+Ursache ist ein Fehler in Podman 6.1.4 und 5.8.9 ([podman#29971](https://github.com/podman-container-tools/podman/issues/29971)): Der mitgelieferte gvproxy v0.9.0 löscht eine liegengebliebene Socket-Datei `%TEMP%\podman\podman-machine-default-api.sock` vor dem Start nicht mehr. `win-sshproxy` kann sie nicht binden (Windows-Ereignisprotokoll, Anwendung, Quelle `.NET Runtime`: `bind: Only one usage of each socket address`), beendet sich und nimmt die Named Pipe mit, die `podman compose` an `docker-compose.exe` weiterreicht. Ein sauberes `podman machine stop` räumt die Datei auf, ein Windows-Neustart nicht.
+
+Behoben ist das ab Podman 6.2.0 ([#30007](https://github.com/podman-container-tools/podman/pull/30007)), das die Datei beim Start selbst entfernt. Bis zum Update hilft, die Datei bei gestoppter Machine zu löschen:
+
+```powershell
+podman machine stop
+Remove-Item $env:TEMP\podman\podman-machine-default-api.sock
+podman machine start
+Test-Path \\.\pipe\podman-machine-default   # True
+```
+
+Lässt sich die Datei nicht löschen (`The file cannot be accessed by the system`), stattdessen den Ordner `%TEMP%\podman` umbenennen und die Machine starten.

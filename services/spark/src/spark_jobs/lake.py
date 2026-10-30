@@ -4,13 +4,13 @@
 file:// (Tests), ohne einen zweiten S3-Client im Image.
 """
 
-import os
 from dataclasses import dataclass
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 
-from spark_jobs.periods import Month
+from pipeline_common.env import required
+from pipeline_common.periods import Month
 
 
 @dataclass(frozen=True)
@@ -23,10 +23,10 @@ class LakePaths:
     @classmethod
     def from_env(cls) -> "LakePaths":
         return cls(
-            bronze=f"s3a://{os.environ.get('BRONZE_BUCKET', 'bronze')}",
-            silver=f"s3a://{os.environ.get('SILVER_BUCKET', 'silver')}",
-            gold=f"s3a://{os.environ.get('GOLD_BUCKET', 'gold')}",
-            dataset=os.environ.get("TLC_DATASET", "yellow_tripdata"),
+            bronze=f"s3a://{required('BRONZE_BUCKET')}",
+            silver=f"s3a://{required('SILVER_BUCKET')}",
+            gold=f"s3a://{required('GOLD_BUCKET')}",
+            dataset=required("TLC_DATASET"),
         )
 
     def bronze_month(self, month: Month) -> str:
