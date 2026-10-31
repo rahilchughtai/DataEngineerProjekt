@@ -18,7 +18,7 @@ from pyspark.sql import SparkSession
 
 from pipeline_common import env
 from pipeline_common.periods import parse_period, period_from_env
-from pipeline_common.reports import EXIT_CONFIG, EXIT_FAILED, EXIT_OK
+from pipeline_common.reports import ExitCode
 from pipeline_common.run_id import read_run_id, started_at
 from pipeline_common.timing import now_utc
 from spark_jobs import job, lake
@@ -105,17 +105,17 @@ def load_config() -> tuple[str, LakePaths, str, str]:
 def main() -> int:
     started = job.start("pipeline_report", build_session, log, load_config)
     if started is None:
-        return EXIT_CONFIG
+        return ExitCode.CONFIG
     (period, paths, run_id, runs_dir), spark = started
 
     try:
         run(spark, paths, run_id, period, runs_dir)
     except StepReportError as err:
         log.error("%s", err)
-        return EXIT_FAILED
+        return ExitCode.FAILED
     finally:
         spark.stop()
-    return EXIT_OK
+    return ExitCode.OK
 
 
 if __name__ == "__main__":

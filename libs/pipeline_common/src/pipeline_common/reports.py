@@ -1,14 +1,20 @@
 """Aufbau der Run-Reports und Exit-Codes, die alle Schritte der Kette gleich verwenden."""
 
 from collections import Counter
+from enum import IntEnum
 from typing import Any
 
 from pipeline_common.timing import elapsed
 
-EXIT_OK = 0
-EXIT_FAILED = 1
-EXIT_CONFIG = 2
-EXIT_INCOMPLETE = 3
+
+class ExitCode(IntEnum):
+    """Exit-Codes aller Schritte; Compose hält die Kette bei jedem Wert außer OK an."""
+
+    OK = 0
+    FAILED = 1  # mindestens ein Monat fehlgeschlagen
+    CONFIG = 2  # Konfigurationsfehler, bevor etwas verarbeitet wurde
+    INCOMPLETE = 3  # Quelldaten für einen Monat fehlen
+
 
 # Status eines Monats im Report. Die Status für fehlende Quelldaten legt jeder Schritt selbst fest.
 FAILED = "failed"
@@ -43,10 +49,10 @@ def run_report(
     }
 
 
-def exit_code(counts: dict[str, int], incomplete_status: str) -> int:
+def exit_code(counts: dict[str, int], incomplete_status: str) -> ExitCode:
     """1 bei fehlgeschlagenen Monaten, 3 wenn Quelldaten für einen Monat fehlen, sonst 0."""
     if counts.get(FAILED):
-        return EXIT_FAILED
+        return ExitCode.FAILED
     if counts.get(incomplete_status):
-        return EXIT_INCOMPLETE
-    return EXIT_OK
+        return ExitCode.INCOMPLETE
+    return ExitCode.OK

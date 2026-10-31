@@ -8,7 +8,7 @@ Gemeinsamer Code der Pipeline-Services, ohne Abhängigkeiten und lauffähig ab P
 | `run_id` | `read_run_id`: liest und prüft die Run-ID, die `run-init` ins Volume schreibt; `started_at`: Startzeit aus der Run-ID |
 | `env` | `required`, `optional` und `ConfigError` für Umgebungsvariablen |
 | `logs` | `setup_logging` mit dem gemeinsamen Format; ein unbekanntes `LOG_LEVEL` fällt mit Warnung auf `INFO` zurück |
-| `reports` | `run_report` (Aufbau des JSON-Reports eines Schritts), `failed_entry` (Eintrag eines fehlgeschlagenen Monats), die Status `FAILED`/`PROCESSED`, `exit_code` und die Konstanten `EXIT_*` (0, 1 bei Fehlern, 2 bei Konfigurationsfehlern, 3 bei fehlenden Quelldaten) |
+| `reports` | `run_report` (Aufbau des JSON-Reports eines Schritts), `failed_entry` (Eintrag eines fehlgeschlagenen Monats), die Status `FAILED`/`PROCESSED`, `exit_code` und das Enum `ExitCode` (0 `OK`, 1 `FAILED` bei Fehlern, 2 `CONFIG` bei Konfigurationsfehlern, 3 `INCOMPLETE` bei fehlenden Quelldaten) |
 | `layout` | Ablage im Lake, die mehrere Services kennen: `month_prefix` (Bronze-Präfix eines Monats) und `runs_key` (Ablageort der Reports) |
 | `timing` | `now_utc` (UTC auf ganze Sekunden) und `elapsed` (gerundete Laufzeit seit `time.monotonic()`) |
 

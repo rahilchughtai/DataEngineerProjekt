@@ -14,7 +14,7 @@ from pyspark.sql import DataFrame, SparkSession
 
 from pipeline_common.logs import setup_logging
 from pipeline_common.periods import Month, months_from_env
-from pipeline_common.reports import EXIT_CONFIG, exit_code, failed_entry, run_report
+from pipeline_common.reports import ExitCode, exit_code, failed_entry, run_report
 from pipeline_common.run_id import read_run_id
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
@@ -44,7 +44,7 @@ def start(
 ) -> tuple[T, SparkSession] | None:
     """Liest die Konfiguration und startet erst danach Spark; None bei Konfigurationsfehlern.
 
-    Der Aufrufer beendet sich dann mit EXIT_CONFIG, ohne dass ein Driver gestartet wurde.
+    Der Aufrufer beendet sich dann mit ExitCode.CONFIG, ohne dass ein Driver gestartet wurde.
     """
     setup_logging(quiet=("py4j",))
     try:
@@ -104,7 +104,7 @@ def main(
         name, build_session, log, lambda: (months_from_env(), LakePaths.from_env(), read_run_id())
     )
     if started is None:
-        return EXIT_CONFIG
+        return ExitCode.CONFIG
     (months, paths, run_id), spark = started
 
     log.info("run=%s months=%s", run_id, ",".join(map(str, months)))

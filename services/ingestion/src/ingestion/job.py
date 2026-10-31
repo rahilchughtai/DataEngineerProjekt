@@ -13,7 +13,7 @@ from ingestion.config import Config
 from ingestion.download import NotPublishedError, download, fetch_source_info
 from pipeline_common.logs import setup_logging
 from pipeline_common.periods import Month, months_from_env
-from pipeline_common.reports import EXIT_CONFIG, exit_code, failed_entry, run_report
+from pipeline_common.reports import ExitCode, exit_code, failed_entry, run_report
 from pipeline_common.run_id import read_run_id
 from pipeline_common.timing import elapsed
 
@@ -76,7 +76,7 @@ def main() -> int:
         run_id = read_run_id()
     except ValueError as err:
         log.error("%s", err)
-        return EXIT_CONFIG
+        return ExitCode.CONFIG
 
     log.info("run=%s months=%s", run_id, ",".join(map(str, months)))
 
