@@ -9,8 +9,8 @@ from botocore.exceptions import ClientError
 
 from ingestion.config import Config
 from ingestion.download import DownloadResult, SourceInfo
+from pipeline_common.layout import month_prefix, runs_key
 from pipeline_common.periods import Month
-from pipeline_common.reports import runs_key
 from pipeline_common.timing import now_utc
 
 PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
@@ -30,9 +30,14 @@ def make_client(cfg: Config) -> Any:
     )
 
 
+def file_name(dataset: str, month: Month) -> str:
+    """Name der Monatsdatei, wie die TLC sie veröffentlicht; Bronze übernimmt ihn unverändert."""
+    return f"{dataset}_{month}.parquet"
+
+
 def object_key(dataset: str, month: Month) -> str:
     """Deterministischer, nach Zeit partitionierter Key. Gleicher Monat → gleicher Key."""
-    return f"{dataset}/{month.partition}/{dataset}_{month}.parquet"
+    return f"{month_prefix(dataset, month)}/{file_name(dataset, month)}"
 
 
 def stored_metadata(client: Any, bucket: str, key: str) -> dict[str, str] | None:

@@ -16,6 +16,7 @@ from tenacity import (
 )
 
 from ingestion.config import Config
+from pipeline_common.timing import elapsed
 
 log = logging.getLogger(__name__)
 
@@ -105,11 +106,14 @@ def _download_once(session: requests.Session, url: str, dest: Path, cfg: Config)
                 size += len(chunk)
     if expected is not None and size != int(expected):
         raise TransientDownloadError(f"{url}: {size} von {expected} Bytes empfangen")
-    return DownloadResult(dest, size, digest.hexdigest(), time.monotonic() - started)
+    return DownloadResult(dest, size, digest.hexdigest(), elapsed(started))
 
 
 def validate_parquet(path: Path) -> None:
     """Prüft die Parquet-Magic-Bytes am Anfang und Ende der Datei."""
+    # Kürzere Dateien können nicht gültig sein; seek(-4, 2) würde dort mit OSError abbrechen.
+    if path.stat().st_size < 2 * len(PARQUET_MAGIC):
+        raise InvalidFileError(f"{path.name} ist keine gültige Parquet-Datei (zu kurz)")
     with path.open("rb") as fh:
         head = fh.read(4)
         fh.seek(-4, 2)
