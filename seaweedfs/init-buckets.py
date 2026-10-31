@@ -1,71 +1,57 @@
 #!/usr/bin/env python3
-"""Legt die Buckets der Lake-Schichten an. Idempotent: vorhandene Buckets bleiben unverändert."""
+"""Legt die Buckets der Lake-Schichten über die S3-API an.
+
+Idempotent: vorhandene Buckets bleiben unverändert. Läuft mit der Admin-Identität, weil nur sie
+Buckets anlegen darf; die Pipeline-Services erhalten diese Zugangsdaten nie.
+"""
 
 import os
-import subprocess
-import sys
-import time
 
-MASTER = os.environ.get("SEAWEEDFS_MASTER", "seaweedfs:9333")
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
+
 BUCKETS = os.environ.get("LAKE_BUCKETS", "bronze silver gold").split()
-MAX_ATTEMPTS = 30
 
 
 def log(message: str) -> None:
     print(f"init-buckets: {message}", flush=True)
 
 
-def weed_shell(command: str) -> str:
-    """Führt einen Befehl in weed shell aus und gibt dessen Ausgabe zurück."""
-    result = subprocess.run(
-        ["weed", "shell", f"-master={MASTER}"],
-        input=command,
-        capture_output=True,
-        text=True,
-        check=True,
+def s3_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=os.environ["S3_ENDPOINT"],
+        aws_access_key_id=os.environ["S3_ADMIN_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["S3_ADMIN_SECRET_KEY"],
+        region_name="us-east-1",
+        # Der Healthcheck meldet SeaweedFS bereit, bevor der Filer jede Anfrage annimmt;
+        # Wiederholungen mit Backoff überbrücken diese Anlaufzeit.
+        config=Config(
+            s3={"addressing_style": "path"}, retries={"mode": "standard", "max_attempts": 10}
+        ),
     )
-    return result.stdout
 
 
-def wait_for_master() -> None:
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            weed_shell("cluster.check")
-            return
-        except subprocess.CalledProcessError:
-            log(f"warte auf {MASTER} (Versuch {attempt})")
-            time.sleep(2)
-    sys.exit(f"init-buckets: Master {MASTER} nach {MAX_ATTEMPTS} Versuchen nicht erreichbar")
-
-
-def bucket_names() -> set[str]:
-    """Namen aus s3.bucket.list, das je Bucket eine Zeile "  <name>\\tsize:…" ausgibt.
-
-    Ein vorangestellter Prompt ("> ") wird entfernt, damit nur der exakte Name verglichen wird.
-    """
-    names = set()
-    for line in weed_shell("s3.bucket.list").splitlines():
-        fields = line.split("\t")
-        if len(fields) > 1 and fields[1].startswith("size:") and fields[0].split():
-            names.add(fields[0].split()[-1].lstrip(">"))
-    return names
+def bucket_exists(s3, bucket: str) -> bool:
+    try:
+        s3.head_bucket(Bucket=bucket)
+    except ClientError as err:
+        # Nur "nicht gefunden" heißt fehlend; z. B. AccessDenied bricht den Lauf ab.
+        if err.response["Error"]["Code"] in ("404", "NoSuchBucket", "NotFound"):
+            return False
+        raise
+    return True
 
 
 def main() -> None:
-    wait_for_master()
-
-    existing = bucket_names()
+    s3 = s3_client()
     for bucket in BUCKETS:
-        if bucket in existing:
+        if bucket_exists(s3, bucket):
             log(f"{bucket} existiert bereits")
         else:
-            weed_shell(f"s3.bucket.create -name {bucket}")
+            s3.create_bucket(Bucket=bucket)
             log(f"{bucket} angelegt")
-
-    # weed shell meldet Fehler einzelner Befehle nicht über den Exit-Code; deshalb nachprüfen.
-    missing = sorted(set(BUCKETS) - bucket_names())
-    if missing:
-        sys.exit(f"init-buckets: {', '.join(missing)} fehlt nach dem Anlegen")
 
 
 if __name__ == "__main__":

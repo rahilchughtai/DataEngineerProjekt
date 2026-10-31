@@ -49,13 +49,15 @@ services:
       <<: *healthcheck
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
 
-  # Legt die Buckets an, falls sie fehlen.
+  # Legt die Buckets über die S3-API an, falls sie fehlen. Einziger Service mit der Admin-Identität.
   lake-init:
     image: localhost/taxi-pipeline/seaweedfs:0.1.0
     pull_policy: never
     entrypoint: ["/usr/local/bin/init-buckets.py"]
     environment:
-      SEAWEEDFS_MASTER: seaweedfs:9333
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?siehe .env.example}
       LAKE_BUCKETS: bronze silver gold
     depends_on:
       seaweedfs:
