@@ -1,12 +1,11 @@
-"""Gemeinsamer Ablauf der Monats-Jobs: Einstieg, Schleife über die Monate und Run-Report.
+"""Gemeinsamer Ablauf der Monats-Jobs: Einstieg, Absicherung je Monat und Run-Report.
 
 Die Jobs liefern nur noch die Verarbeitung eines Monats. Fehlende Quellen, Fehler einzelner
-Monate, Report und Exit-Code behandeln beide gleich.
+Monate, Report und Exit-Code behandeln beide gleich. Jeder Job übergibt dafür seinen Logger.
 """
 
 import json
 import logging
-import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -36,29 +35,33 @@ def cached(df: DataFrame) -> Iterator[DataFrame]:
         cached_df.unpersist()
 
 
-def process_month(
+def guarded_month(
     spark: SparkSession,
     month: Month,
     source: str,
     log: logging.Logger,
-    process: Callable[[Entry], Entry],
+    process: Callable[..., Entry],
+    *args: Any,
 ) -> Entry:
-    """Ein Monat; ein Fehler landet als status=failed im Report, statt den Lauf abzubrechen."""
+    """Ruft process(spark, month, entry, *args) auf, wenn die Quelle existiert.
+
+    Ein Fehler landet als status=failed im Report, statt den Lauf abzubrechen.
+    """
     entry: Entry = {"month": str(month), "source": source}
     try:
         if not lake.exists(spark, source):
             log.warning("month=%s status=missing source=%s", month, source)
             return entry | {"status": MISSING}
-        return process(entry)
+        return process(spark, month, entry, *args)
     except Exception as err:
         log.exception("month=%s status=failed", month)
         return entry | {"status": "failed", "error": str(err)}
 
 
-def run_months(
+def write_report(
     spark: SparkSession,
-    months: list[Month],
-    process: Callable[[Month], Entry],
+    started: float,
+    results: list[Entry],
     *,
     run_id: str,
     dataset: str,
@@ -66,19 +69,18 @@ def run_months(
     report_path: str,
     log: logging.Logger,
 ) -> Entry:
-    """Verarbeitet die Monate nacheinander und legt den Run-Report im Lake ab."""
-    started = time.monotonic()
-    results = [process(month) for month in months]
+    """Legt den Run-Report im Lake ab; started ist ein time.monotonic()-Wert vom Beginn."""
     report = run_report(run_id, dataset, started, results, job=job)
     lake.write_text(spark, report_path, json.dumps(report, indent=2))
     log.info("run=%s finished counts=%s report=%s", run_id, report["counts"], report_path)
     return report
 
 
-def main(name: str, run: RunFn, build_session: Callable[[str], SparkSession]) -> int:
+def main(
+    name: str, run: RunFn, build_session: Callable[[str], SparkSession], log: logging.Logger
+) -> int:
     """Einstieg eines Monats-Jobs; Konfigurationsfehler fallen auf, bevor Spark startet."""
     setup_logging(quiet=("py4j",))
-    log = logging.getLogger(name)
     try:
         months = months_from_env()
         paths = LakePaths.from_env()

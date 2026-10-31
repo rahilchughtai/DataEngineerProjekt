@@ -38,7 +38,7 @@ class LakePaths:
         )
 
     def bronze_month(self, month: Month) -> str:
-        return f"{self.bronze}/{self.dataset}/{month.partition}"
+        return partition_path(f"{self.bronze}/{self.dataset}", month)
 
     def bronze_run_report(self, run_id: str) -> str:
         return f"{self.bronze}/{runs_key(self.dataset, run_id)}"
@@ -47,7 +47,7 @@ class LakePaths:
         return f"{self.silver}/{self.dataset}"
 
     def silver_month(self, month: Month) -> str:
-        return f"{self.silver_table()}/{month.partition}"
+        return partition_path(self.silver_table(), month)
 
     def quarantine_table(self) -> str:
         return f"{self.silver}/_quarantine/{self.dataset}"
@@ -63,6 +63,11 @@ class LakePaths:
 
     def pipeline_report(self, run_id: str) -> str:
         return f"{self.gold}/{runs_key('pipeline', run_id)}"
+
+
+def partition_path(table: str, month: Month) -> str:
+    """Pfad der Partition eines Monats in einer Tabelle (oder unter einem Bronze-Präfix)."""
+    return f"{table}/{month.partition}"
 
 
 def _fs(spark: SparkSession, path: str) -> tuple[Any, Any]:
@@ -106,7 +111,7 @@ def write_partition(
     """Überschreibt genau die Partition des Monats, alle anderen bleiben unverändert."""
     if not has_rows:
         # Ein leerer DataFrame schreibt keine Partition und würde einen alten Stand stehen lassen.
-        delete(spark, f"{table}/{month.partition}")
+        delete(spark, partition_path(table, month))
         return
     (
         df.write.mode("overwrite")
@@ -124,7 +129,7 @@ def removed_on_failure(spark: SparkSession, month: Month, tables: Iterable[str])
         yield
     except Exception:
         for table in tables:
-            target = f"{table}/{month.partition}"
+            target = partition_path(table, month)
             try:
                 delete(spark, target)
             except Exception:

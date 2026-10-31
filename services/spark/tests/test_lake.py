@@ -10,6 +10,10 @@ from spark_jobs import lake
 MARCH = Month(2024, 3)
 
 
+def test_partition_path() -> None:
+    assert lake.partition_path("s3a://silver/t", MARCH) == "s3a://silver/t/year=2024/month=03"
+
+
 def test_with_lineage_adds_run_and_partition_columns(spark: SparkSession) -> None:
     processed_at = datetime(2024, 4, 1, 12, 0)
     df = lake.with_lineage(spark.range(1), MARCH, "run", processed_at)

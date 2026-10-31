@@ -105,12 +105,8 @@ def process_month(
     run_id: str,
     zones: Iterable[int] = ZONES,
 ) -> dict[str, Any]:
-    return job.process_month(
-        spark,
-        month,
-        paths.silver_month(month),
-        log,
-        lambda entry: _process_month(spark, month, paths, run_id, zones, entry),
+    return job.guarded_month(
+        spark, month, paths.silver_month(month), log, _process_month, paths, run_id, zones
     )
 
 
@@ -141,10 +137,10 @@ def write_month(
 def _process_month(
     spark: SparkSession,
     month: Month,
+    entry: dict[str, Any],
     paths: LakePaths,
     run_id: str,
     zones: Iterable[int],
-    entry: dict[str, Any],
 ) -> dict[str, Any]:
     started = time.monotonic()
     processed_at = now_utc()
@@ -194,10 +190,12 @@ def run(
     run_id: str,
     zones: Iterable[int] = ZONES,
 ) -> dict[str, Any]:
-    return job.run_months(
+    started = time.monotonic()
+    results = [process_month(spark, month, paths, run_id, zones) for month in months]
+    return job.write_report(
         spark,
-        months,
-        lambda month: process_month(spark, month, paths, run_id, zones),
+        started,
+        results,
         run_id=run_id,
         dataset=paths.dataset,
         job=JOB,
@@ -207,7 +205,7 @@ def run(
 
 
 def main() -> int:
-    return job.main(JOB, run, build_session)
+    return job.main(JOB, run, build_session, log)
 
 
 if __name__ == "__main__":

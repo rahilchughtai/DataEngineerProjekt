@@ -61,12 +61,8 @@ def files_for(rows: int) -> int:
 def process_month(
     spark: SparkSession, month: Month, paths: LakePaths, run_id: str
 ) -> dict[str, Any]:
-    return job.process_month(
-        spark,
-        month,
-        paths.bronze_month(month),
-        log,
-        lambda entry: _process_month(spark, month, paths, run_id, entry),
+    return job.guarded_month(
+        spark, month, paths.bronze_month(month), log, _process_month, paths, run_id
     )
 
 
@@ -88,7 +84,7 @@ def write_month(
 
 
 def _process_month(
-    spark: SparkSession, month: Month, paths: LakePaths, run_id: str, entry: dict[str, Any]
+    spark: SparkSession, month: Month, entry: dict[str, Any], paths: LakePaths, run_id: str
 ) -> dict[str, Any]:
     started = time.monotonic()
     processed_at = now_utc()
@@ -141,10 +137,12 @@ def _process_month(
 
 
 def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str) -> dict[str, Any]:
-    return job.run_months(
+    started = time.monotonic()
+    results = [process_month(spark, month, paths, run_id) for month in months]
+    return job.write_report(
         spark,
-        months,
-        lambda month: process_month(spark, month, paths, run_id),
+        started,
+        results,
         run_id=run_id,
         dataset=paths.dataset,
         job=JOB,
@@ -154,7 +152,7 @@ def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str)
 
 
 def main() -> int:
-    return job.main(JOB, run, build_session)
+    return job.main(JOB, run, build_session, log)
 
 
 if __name__ == "__main__":
