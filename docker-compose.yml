@@ -18,9 +18,9 @@ x-spark-job: &spark-job
   image: localhost/taxi-pipeline/spark:0.1.0
   pull_policy: never
   environment:
-    INGEST_PERIOD: ${INGEST_PERIOD:?siehe .env.example}
-    S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
-    S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+    INGEST_PERIOD: ${INGEST_PERIOD:?}
+    S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?}
+    S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?}
     # Memory per executor; must stay below SPARK_WORKER_MEMORY, otherwise the job waits forever.
     SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
   restart: "no"
@@ -31,15 +31,15 @@ services:
     build: ./seaweedfs
     image: localhost/taxi-pipeline/seaweedfs:0.1.0
     environment:
-      WEED_JWT_FILER_SIGNING_KEY: ${SEAWEEDFS_SIGNING_KEY:?siehe .env.example}
-      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}
-      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?siehe .env.example}
-      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
-      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
-      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
-      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
-      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?siehe .env.example}
-      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?siehe .env.example}
+      WEED_JWT_FILER_SIGNING_KEY: ${SEAWEEDFS_SIGNING_KEY:?}
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?}
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?}
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?}
+      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?}
+      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?}
     volumes:
       - seaweedfs-data:/data
     ports:
@@ -57,8 +57,8 @@ services:
     image: localhost/taxi-pipeline/lake-init:0.1.0
     environment:
       S3_ENDPOINT: http://seaweedfs:8333
-      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}
-      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?siehe .env.example}
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?}
       LAKE_BUCKETS: bronze silver gold
     depends_on:
       seaweedfs:
@@ -72,11 +72,11 @@ services:
       dockerfile: services/ingestion/Dockerfile
     image: localhost/taxi-pipeline/ingestion:0.1.0
     environment:
-      INGEST_PERIOD: ${INGEST_PERIOD:?siehe .env.example}
-      TLC_BASE_URL: ${TLC_BASE_URL:?siehe .env.example}
+      INGEST_PERIOD: ${INGEST_PERIOD:?}
+      TLC_BASE_URL: ${TLC_BASE_URL:?}
       S3_ENDPOINT: http://seaweedfs:8333
-      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
-      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?}
     depends_on:
       lake-init:
         condition: service_completed_successfully

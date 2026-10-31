@@ -98,7 +98,7 @@ def main() -> None:
         rejected = F.col("reject_reason").isNotNull()
         write_month(silver.filter(~rejected).drop("reject_reason"), SILVER, year, month)
         write_month(silver.filter(rejected), QUARANTINE, year, month)
-        log.info("%04d-%02d: Silver und Quarantäne geschrieben", year, month)
+        log.info("%04d-%02d: silver and quarantine written", year, month)
     spark.stop()
 
 

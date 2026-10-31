@@ -7,9 +7,12 @@ aborts the run; docker compose then does not start the Spark jobs.
 
 import logging
 import os
+import time
 
 import boto3
 import requests
+import urllib3
+from botocore.client import BaseClient
 from botocore.config import Config
 from botocore.exceptions import ClientError
 from requests.adapters import HTTPAdapter
@@ -22,6 +25,7 @@ log = logging.getLogger("ingestion")
 
 BUCKET = "bronze"
 DATASET = "yellow_tripdata"
+ATTEMPTS = 3
 
 
 def file_name(year: int, month: int) -> str:
@@ -37,14 +41,16 @@ def http_session() -> requests.Session:
     # Up to 5 retries with growing backoff on connection errors, 429 and 5xx.
     # 403/404 means the month is not published (yet), which fails immediately.
     retry = Retry(total=5, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
-    session.mount("http://", HTTPAdapter(max_retries=retry))
-    session.mount("https://", HTTPAdapter(max_retries=retry))
+    adapter = HTTPAdapter(max_retries=retry)
+    # http:// only for the E2E mock (tlc-mock); the real TLC URL is https
+    for prefix in ("http://", "https://"):
+        session.mount(prefix, adapter)
     # Download uncompressed so bronze is byte-identical to the source.
     session.headers["Accept-Encoding"] = "identity"
     return session
 
 
-def exists(s3, key: str) -> bool:
+def object_exists(s3: BaseClient, key: str) -> bool:
     try:
         s3.head_object(Bucket=BUCKET, Key=key)
     except ClientError as err:
@@ -54,16 +60,32 @@ def exists(s3, key: str) -> bool:
     return True
 
 
-def ingest_month(s3, http: requests.Session, base_url: str, year: int, month: int) -> None:
-    key = object_key(year, month)
-    if exists(s3, key):
-        log.info("s3://%s/%s existiert bereits, übersprungen", BUCKET, key)
-        return
-    url = f"{base_url}/{file_name(year, month)}"
-    with http.get(url, stream=True, timeout=60) as response:
+def download_to_bronze(s3: BaseClient, session: requests.Session, url: str, key: str) -> None:
+    with session.get(url, stream=True, timeout=60) as response:
         response.raise_for_status()
         # An upload creates the object only at the end: an abort leaves no half month behind.
         s3.upload_fileobj(response.raw, BUCKET, key)
+
+
+def ingest_month(
+    s3: BaseClient, session: requests.Session, base_url: str, year: int, month: int
+) -> None:
+    key = object_key(year, month)
+    if object_exists(s3, key):
+        log.info("s3://%s/%s already exists, skipped", BUCKET, key)
+        return
+    url = f"{base_url}/{file_name(year, month)}"
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            download_to_bronze(s3, session, url, key)
+            break
+        # Not RequestException: that would also retry HTTPError (403/404 = month not published).
+        # Errors while reading response.raw come from urllib3, not from requests.
+        except (requests.ConnectionError, requests.Timeout, urllib3.exceptions.HTTPError) as err:
+            if attempt == ATTEMPTS:
+                raise
+            log.warning("%s: attempt %d/%d failed (%s)", url, attempt, ATTEMPTS, err)
+            time.sleep(2**attempt)
     log.info("%s → s3://%s/%s", url, BUCKET, key)
 
 
@@ -78,10 +100,14 @@ def main() -> None:
         region_name="us-east-1",
         config=Config(s3={"addressing_style": "path"}),
     )
-    http = http_session()
+    session = http_session()
     base_url = os.environ["TLC_BASE_URL"].rstrip("/")
-    for year, month in months(os.environ["INGEST_PERIOD"]):
-        ingest_month(s3, http, base_url, year, month)
+    try:
+        for year, month in months(os.environ["INGEST_PERIOD"]):
+            ingest_month(s3, session, base_url, year, month)
+    except Exception:
+        log.exception("ingestion failed")
+        raise
 
 
 if __name__ == "__main__":

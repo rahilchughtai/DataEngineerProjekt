@@ -37,7 +37,7 @@ def main() -> None:
     for year, month in period_months():
         silver = spark.read.parquet(month_path(SILVER, year, month))
         write_month(hourly_demand(silver), GOLD, year, month)
-        log.info("%04d-%02d: Gold geschrieben", year, month)
+        log.info("%04d-%02d: gold written", year, month)
     spark.stop()
 
 

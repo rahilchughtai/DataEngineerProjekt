@@ -96,5 +96,5 @@ def test_access_matches_policy(s3: Any, identity: dict[str, Any]) -> None:
             if operation == "Write" and actual:
                 s3.delete_object(Bucket=bucket, Key="_e2e/probe")
             if actual != expected:
-                mismatches.append(f"{operation}:{bucket} erwartet {expected}, erhalten {actual}")
+                mismatches.append(f"{operation}:{bucket} expected {expected}, got {actual}")
     assert not mismatches

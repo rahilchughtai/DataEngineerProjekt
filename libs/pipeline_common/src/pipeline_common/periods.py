@@ -13,7 +13,7 @@ def months(period: str) -> list[tuple[int, int]]:
     """'2024Q1' → [(2024, 1), (2024, 2), (2024, 3)], '2024-03' → [(2024, 3)]."""
     match = _PERIOD.match(period.strip())
     if not match or (match[2] and not 1 <= int(match[2]) <= 12):
-        raise ValueError(f"INGEST_PERIOD muss YYYYQn oder YYYY-MM sein, nicht {period!r}")
+        raise ValueError(f"INGEST_PERIOD must be YYYYQn or YYYY-MM, not {period!r}")
     year = int(match[1])
     if match[2]:
         return [(year, int(match[2]))]

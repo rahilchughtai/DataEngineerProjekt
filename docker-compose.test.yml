@@ -61,14 +61,14 @@ services:
     image: localhost/taxi-pipeline/e2e-tests:0.1.0
     environment:
       S3_ENDPOINT: http://seaweedfs:8333
-      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}
-      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?siehe .env.example}
-      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
-      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
-      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
-      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
-      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?siehe .env.example}
-      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?siehe .env.example}
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?}
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?}
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?}
+      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?}
+      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?}
     depends_on:
       report:
         condition: service_completed_successfully

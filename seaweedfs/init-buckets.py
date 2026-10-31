@@ -48,10 +48,10 @@ def main() -> None:
     s3 = s3_client()
     for bucket in BUCKETS:
         if bucket_exists(s3, bucket):
-            log(f"{bucket} existiert bereits")
+            log(f"{bucket} already exists")
         else:
             s3.create_bucket(Bucket=bucket)
-            log(f"{bucket} angelegt")
+            log(f"{bucket} created")
 
 
 if __name__ == "__main__":
