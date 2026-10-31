@@ -53,7 +53,7 @@ services:
   lake-init:
     image: localhost/taxi-pipeline/seaweedfs:0.1.0
     pull_policy: never
-    entrypoint: ["/usr/local/bin/init-buckets.sh"]
+    entrypoint: ["/usr/local/bin/init-buckets.py"]
     environment:
       SEAWEEDFS_MASTER: seaweedfs:9333
       LAKE_BUCKETS: bronze silver gold
