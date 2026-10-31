@@ -11,10 +11,18 @@ EXIT_FAILED = 1
 EXIT_CONFIG = 2
 EXIT_INCOMPLETE = 3
 
+# Status eines Monats im Report. Die Status für fehlende Quelldaten legt jeder Schritt selbst fest.
+FAILED = "failed"
+PROCESSED = "processed"
 
-def runs_key(dataset: str, run_id: str) -> str:
-    """Key des Reports relativ zum Bucket; jeder Schritt legt ihn in seiner Schicht ab."""
-    return f"_runs/{dataset}/{run_id}.json"
+# Fehlertexte von Spark enthalten den ganzen Java-Stacktrace; der Report bekommt nur den Anfang.
+MAX_ERROR_LENGTH = 1000
+
+
+def failed_entry(entry: dict[str, Any], err: BaseException) -> dict[str, Any]:
+    """Eintrag eines fehlgeschlagenen Monats, mit Fehlertyp, auch wenn die Meldung leer ist."""
+    error = f"{type(err).__name__}: {err}"[:MAX_ERROR_LENGTH]
+    return entry | {"status": FAILED, "error": error}
 
 
 def count_statuses(results: Iterable[dict[str, Any]]) -> dict[str, int]:
@@ -42,7 +50,7 @@ def run_report(
 
 def exit_code(counts: dict[str, int], incomplete_status: str) -> int:
     """1 bei fehlgeschlagenen Monaten, 3 wenn Quelldaten für einen Monat fehlen, sonst 0."""
-    if counts.get("failed"):
+    if counts.get(FAILED):
         return EXIT_FAILED
     if counts.get(incomplete_status):
         return EXIT_INCOMPLETE

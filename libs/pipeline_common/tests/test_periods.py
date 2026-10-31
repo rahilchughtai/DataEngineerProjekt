@@ -30,6 +30,7 @@ def test_month_str_is_zero_padded() -> None:
 
 def test_month_partition_is_zero_padded() -> None:
     assert Month(2024, 3).partition == "year=2024/month=03"
+    assert Month(2024, 3).partition_values == {"year": "2024", "month": "03"}
 
 
 @pytest.mark.parametrize(

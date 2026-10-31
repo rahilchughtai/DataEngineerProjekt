@@ -2,7 +2,13 @@ import time
 
 import pytest
 
-from pipeline_common.reports import count_statuses, exit_code, run_report, runs_key
+from pipeline_common.reports import (
+    MAX_ERROR_LENGTH,
+    count_statuses,
+    exit_code,
+    failed_entry,
+    run_report,
+)
 
 
 def test_count_statuses() -> None:
@@ -33,5 +39,11 @@ def test_exit_code(counts: dict[str, int], expected: int) -> None:
     assert exit_code(counts, "not_published") == expected
 
 
-def test_runs_key() -> None:
-    assert runs_key("yellow_tripdata", "run") == "_runs/yellow_tripdata/run.json"
+def test_failed_entry_names_error_type() -> None:
+    entry = failed_entry({"month": "2024-01"}, TimeoutError())
+    assert entry == {"month": "2024-01", "status": "failed", "error": "TimeoutError: "}
+
+
+def test_failed_entry_truncates_long_errors() -> None:
+    entry = failed_entry({}, RuntimeError("x" * 5000))
+    assert len(entry["error"]) == MAX_ERROR_LENGTH

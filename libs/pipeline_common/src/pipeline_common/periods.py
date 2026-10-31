@@ -22,9 +22,14 @@ class Month:
         return f"{self.year:04d}-{self.month:02d}"
 
     @property
+    def partition_values(self) -> dict[str, str]:
+        """Werte der Partitionsspalten year und month, zweistellig wie in den Pfaden."""
+        return {"year": f"{self.year:04d}", "month": f"{self.month:02d}"}
+
+    @property
     def partition(self) -> str:
         """Hive-Partition des Monats, wie sie alle Schichten im Lake verwenden."""
-        return f"year={self.year:04d}/month={self.month:02d}"
+        return "/".join(f"{name}={value}" for name, value in self.partition_values.items())
 
     def next(self) -> "Month":
         if self.month == 12:
