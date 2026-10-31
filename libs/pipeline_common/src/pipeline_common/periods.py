@@ -1,4 +1,4 @@
-"""Zeitraum eines Laufs und Monatspartitionen: das Einzige, was Ingestion und Spark teilen.
+"""Zeitraum eines Laufs und Monatspartitionen, die Ingestion und Spark gleich verwenden.
 
 INGEST_PERIOD ist ein Quartal (2024Q1) für den regulären Lauf oder ein Monat (2024-03), um nur
 diesen neu zu verarbeiten. Bronze, Silver und Gold liegen alle unter year=YYYY/month=MM.

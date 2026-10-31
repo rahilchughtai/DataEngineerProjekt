@@ -15,6 +15,7 @@ from botocore.exceptions import ClientError
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from pipeline_common.logs import setup_logging
 from pipeline_common.periods import months, partition
 
 log = logging.getLogger("ingestion")
@@ -67,9 +68,7 @@ def ingest_month(s3, http: requests.Session, base_url: str, year: int, month: in
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    setup_logging()
     # Eigene Identität mit Schreibrecht nur auf bronze (Least Privilege, siehe seaweedfs/).
     s3 = boto3.client(
         "s3",

@@ -1,10 +1,10 @@
 """Gemeinsames der Spark-Jobs: Session, Tabellen im Data Lake und Schreiben eines Monats."""
 
-import logging
 import os
 
 from pyspark.sql import DataFrame, SparkSession
 
+from pipeline_common.logs import setup_logging
 from pipeline_common.periods import months, partition
 
 # Tabellen im Data Lake (SeaweedFS S3); jede ist nach year=YYYY/month=MM partitioniert.
@@ -21,10 +21,7 @@ def start(app: str) -> SparkSession:
     Nur der Driver kennt die Zugangsdaten; die Executors auf den Workern erhalten sie über die
     Hadoop-Konfiguration des Jobs. Endpoint und S3A-Einstellungen stehen in spark-defaults.conf.
     """
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
-    logging.getLogger("py4j").setLevel(logging.WARNING)
+    setup_logging("py4j")
     spark = (
         SparkSession.builder.appName(app)
         .config("spark.hadoop.fs.s3a.access.key", os.environ["S3_SPARK_ACCESS_KEY"])

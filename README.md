@@ -38,7 +38,7 @@ Jeder Schritt startet erst, wenn der vorige erfolgreich beendet ist (`depends_on
 Alle drei Schichten sind nach `year=YYYY/month=MM` partitioniert. Den Zeitraum gibt
 `INGEST_PERIOD` vor: ein Quartal (`2024Q1`) für den regulären Lauf oder ein Monat (`2024-03`), um
 nur diesen neu zu verarbeiten. Das Parsen des Zeitraums und das Format der Partitionen teilen sich
-Ingestion und Spark über die kleine Bibliothek [libs/pipeline_common](libs/pipeline_common/src/pipeline_common/periods.py).
+Ingestion und Spark über die kleine Bibliothek [libs/pipeline_common](libs/pipeline_common/src/pipeline_common), zusammen mit dem gemeinsamen Log-Format.
 
 **Silver** übernimmt nur die für Nachfrage-Features nötigen Spalten, castet sie auf feste Typen
 (die TLC ändert ihr Schema über die Jahre), entfernt exakte Duplikate und prüft neun
