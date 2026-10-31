@@ -12,12 +12,14 @@ import math
 import sys
 import time
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from pipeline_common.periods import Month
+from pipeline_common.reports import FAILED, PROCESSED
 from pipeline_common.timing import elapsed, now_utc
 from spark_jobs import job, lake
 from spark_jobs.lake import LakePaths
@@ -61,9 +63,8 @@ def files_for(rows: int) -> int:
 def process_month(
     spark: SparkSession, month: Month, paths: LakePaths, run_id: str
 ) -> dict[str, Any]:
-    return job.guarded_month(
-        spark, month, paths.bronze_month(month), log, _process_month, paths, run_id
-    )
+    process = partial(_process_month, spark, month, paths, run_id)
+    return job.guarded_month(spark, month, paths.bronze_month(month), log, process)
 
 
 def write_month(
@@ -84,13 +85,12 @@ def write_month(
 
 
 def _process_month(
-    spark: SparkSession, month: Month, entry: dict[str, Any], paths: LakePaths, run_id: str
+    spark: SparkSession, month: Month, paths: LakePaths, run_id: str, source: str
 ) -> dict[str, Any]:
+    """Felder des Monats im Report: Status, Zähler und Laufzeit."""
     started = time.monotonic()
     processed_at = now_utc()
-    raw = spark.read.parquet(entry["source"]).withColumn(
-        "_source_file", F.col("_metadata.file_path")
-    )
+    raw = spark.read.parquet(source).withColumn("_source_file", F.col("_metadata.file_path"))
     rows_in = raw.count()
     with job.cached(prepare(raw, month, run_id, processed_at)) as classified:
         by_reason = {
@@ -121,7 +121,7 @@ def _process_month(
             rows_rejected,
         )
         error = "Keine gültigen Zeilen; Silver und Quarantäne bleiben unverändert"
-        status: dict[str, Any] = {"status": "failed", "error": error}
+        status: dict[str, Any] = {"status": FAILED, "error": error}
     else:
         log.info(
             "month=%s status=processed rows_in=%d valid=%d rejected=%d duplicates=%d seconds=%.1f",
@@ -132,8 +132,8 @@ def _process_month(
             counts["duplicates"],
             seconds,
         )
-        status = {"status": "processed"}
-    return entry | status | counts | {"seconds": seconds}
+        status = {"status": PROCESSED}
+    return status | counts | {"seconds": seconds}
 
 
 def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str) -> dict[str, Any]:

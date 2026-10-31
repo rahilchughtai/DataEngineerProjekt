@@ -17,20 +17,42 @@ from typing import Any
 from pyspark.sql import SparkSession
 
 from pipeline_common import env
-from pipeline_common.logs import setup_logging
 from pipeline_common.periods import parse_period, period_from_env
 from pipeline_common.reports import EXIT_CONFIG, EXIT_FAILED, EXIT_OK
 from pipeline_common.run_id import read_run_id, started_at
 from pipeline_common.timing import now_utc
-from spark_jobs import lake
+from spark_jobs import job, lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.session import build_session
 
 log = logging.getLogger("pipeline_report")
 
 
-class MissingReportError(RuntimeError):
+class StepReportError(RuntimeError):
+    """Der Report eines Schritts lässt sich nicht verwenden."""
+
+
+class MissingReportError(StepReportError):
     """Ein Schritt des Laufs hat keinen Report geschrieben."""
+
+
+class InvalidReportError(StepReportError):
+    """Der Report eines Schritts ist kein JSON oder hat nicht die erwarteten Felder."""
+
+
+def read_step_report(spark: SparkSession, step: str, path: str) -> dict[str, Any]:
+    if not lake.exists(spark, path):
+        raise MissingReportError(f"Report von {step} fehlt: {path}")
+    try:
+        report = json.loads(lake.read_text(spark, path))
+    except json.JSONDecodeError as err:
+        raise InvalidReportError(f"Report von {step} ist kein gültiges JSON: {path}") from err
+    if not isinstance(report, dict):
+        raise InvalidReportError(f"Report von {step} ist kein JSON-Objekt: {path}")
+    missing = [key for key in ("counts", "seconds") if key not in report]
+    if missing:
+        raise InvalidReportError(f"Report von {step} ohne {', '.join(missing)}: {path}")
+    return report
 
 
 def step_reports(paths: LakePaths, run_id: str) -> dict[str, str]:
@@ -74,11 +96,10 @@ def write_host_copy(runs_dir: str, report: dict[str, Any]) -> None:
 def run(
     spark: SparkSession, paths: LakePaths, run_id: str, period: str, runs_dir: str = ""
 ) -> dict[str, Any]:
-    reports = {}
-    for step, path in step_reports(paths, run_id).items():
-        if not lake.exists(spark, path):
-            raise MissingReportError(f"Report von {step} fehlt: {path}")
-        reports[step] = json.loads(lake.read_text(spark, path))
+    reports = {
+        step: read_step_report(spark, step, path)
+        for step, path in step_reports(paths, run_id).items()
+    }
 
     report = build_report(run_id, period, reports, now_utc())
     report_path = paths.pipeline_report(run_id)
@@ -90,22 +111,21 @@ def run(
     return report
 
 
+def load_config() -> tuple[str, LakePaths, str, str]:
+    period = period_from_env()
+    parse_period(period)
+    return period, LakePaths.from_env(), read_run_id(), env.optional("RUNS_DIR", "")
+
+
 def main() -> int:
-    setup_logging(quiet=("py4j",))
-    try:
-        period = period_from_env()
-        parse_period(period)
-        paths = LakePaths.from_env()
-        run_id = read_run_id()
-        runs_dir = env.optional("RUNS_DIR", "")
-        spark = build_session("pipeline_report")
-    except ValueError as err:
-        log.error("%s", err)
+    started = job.start("pipeline_report", build_session, log, load_config)
+    if started is None:
         return EXIT_CONFIG
+    (period, paths, run_id, runs_dir), spark = started
 
     try:
         run(spark, paths, run_id, period, runs_dir)
-    except MissingReportError as err:
+    except StepReportError as err:
         log.error("%s", err)
         return EXIT_FAILED
     finally:

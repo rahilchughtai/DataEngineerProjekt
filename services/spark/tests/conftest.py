@@ -2,10 +2,13 @@
 
 from collections.abc import Callable, Iterator
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pyspark.sql import DataFrame, SparkSession
+
+from spark_jobs.lake import LakePaths
 
 # Bronze-Schema wie in den TLC-Dateien 2024 (Auszug plus zwei Spalten, die Silver verwirft).
 BRONZE_SCHEMA = (
@@ -43,6 +46,18 @@ def spark() -> Iterator[SparkSession]:
     session.sparkContext.setLogLevel("ERROR")
     yield session
     session.stop()
+
+
+@pytest.fixture
+def paths(tmp_path: Path) -> LakePaths:
+    """Lake-Pfade unter tmp_path; die Lake-Funktionen arbeiten dort über file://."""
+    root = tmp_path.as_uri()
+    return LakePaths(
+        bronze=f"{root}/bronze",
+        silver=f"{root}/silver",
+        gold=f"{root}/gold",
+        dataset="yellow_tripdata",
+    )
 
 
 @pytest.fixture

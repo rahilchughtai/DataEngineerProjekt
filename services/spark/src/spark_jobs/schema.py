@@ -10,6 +10,8 @@ from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import DataType, DoubleType, IntegerType, TimestampNTZType
 
+from pipeline_common.periods import Month
+
 # Silver-Spalte → (Spalte in Bronze, Zieltyp).
 # Spark löst Spaltennamen ohne Unterscheidung von Groß- und Kleinschreibung auf.
 # Zeitstempel sind lokale NYC-Zeit ohne Zone (TLC-Konvention) und bleiben deshalb TIMESTAMP_NTZ.
@@ -47,6 +49,15 @@ def harmonize(raw: DataFrame) -> DataFrame:
     source_file = F.col("_source_file") if "_source_file" in raw.columns else F.lit(None)
     columns.append(source_file.cast("string").alias("_source_file"))
     return raw.select(*columns)
+
+
+def month_bounds(month: Month) -> tuple[Column, Column]:
+    """Erster Zeitpunkt des Monats und des Folgemonats, als TIMESTAMP_NTZ wie in Silver."""
+
+    def first_instant(m: Month) -> Column:
+        return F.lit(f"{m}-01 00:00:00").cast("timestamp_ntz")
+
+    return first_instant(month), first_instant(month.next())
 
 
 def duration_seconds() -> Column:

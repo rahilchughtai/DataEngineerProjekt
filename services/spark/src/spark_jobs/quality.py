@@ -11,18 +11,11 @@ from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 
 from pipeline_common.periods import Month
-from spark_jobs.schema import LOCATION_ID_RANGE, duration_seconds
+from spark_jobs.schema import LOCATION_ID_RANGE, duration_seconds, month_bounds
 
 MAX_DURATION_SECONDS = 24 * 3600
 MAX_TRIP_DISTANCE_MILES = 200.0
 MAX_PASSENGERS = 9
-
-
-def month_bounds(month: Month) -> tuple[Column, Column]:
-    def first_instant(m: Month) -> Column:
-        return F.lit(f"{m}-01 00:00:00").cast("timestamp_ntz")
-
-    return first_instant(month), first_instant(month.next())
 
 
 def _out_of_range(name: str, low: float, high: float) -> Column:

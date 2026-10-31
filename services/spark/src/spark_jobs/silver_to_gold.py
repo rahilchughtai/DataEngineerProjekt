@@ -13,17 +13,18 @@ import sys
 import time
 from collections.abc import Iterable
 from datetime import datetime
+from functools import partial
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from pipeline_common.periods import Month
+from pipeline_common.reports import PROCESSED
 from pipeline_common.timing import elapsed, now_utc
 from spark_jobs import job, lake
 from spark_jobs.lake import LakePaths
-from spark_jobs.quality import month_bounds
-from spark_jobs.schema import LOCATION_ID_RANGE, duration_seconds
+from spark_jobs.schema import LOCATION_ID_RANGE, duration_seconds, month_bounds
 from spark_jobs.session import build_session
 
 JOB = "silver_to_gold"
@@ -42,10 +43,7 @@ GOLD_COLUMNS = [
     "hour_of_day",
     "day_of_week",
     "is_weekend",
-    "_run_id",
-    "_processed_at",
-    "year",
-    "month",
+    *lake.LINEAGE_COLUMNS,
 ]
 
 
@@ -105,9 +103,8 @@ def process_month(
     run_id: str,
     zones: Iterable[int] = ZONES,
 ) -> dict[str, Any]:
-    return job.guarded_month(
-        spark, month, paths.silver_month(month), log, _process_month, paths, run_id, zones
-    )
+    process = partial(_process_month, spark, month, paths, run_id, zones)
+    return job.guarded_month(spark, month, paths.silver_month(month), log, process)
 
 
 def check_month(stats: dict[str, Any], silver_run_ids: list[str]) -> None:
@@ -137,14 +134,15 @@ def write_month(
 def _process_month(
     spark: SparkSession,
     month: Month,
-    entry: dict[str, Any],
     paths: LakePaths,
     run_id: str,
     zones: Iterable[int],
+    source: str,
 ) -> dict[str, Any]:
+    """Felder des Monats im Report: Status, Zähler, Lineage und Laufzeit."""
     started = time.monotonic()
     processed_at = now_utc()
-    with job.cached(spark.read.parquet(entry["source"])) as silver:
+    with job.cached(spark.read.parquet(source)) as silver:
         # Lineage: aus welchen Läufen von Job 1 die Silver-Daten des Monats stammen.
         by_run = {
             row["_run_id"]: row["count"] for row in silver.groupBy("_run_id").count().collect()
@@ -175,12 +173,7 @@ def _process_month(
         stats["rows_without_trips"],
         seconds,
     )
-    return (
-        entry
-        | {"status": "processed"}
-        | stats
-        | {"silver_run_ids": silver_run_ids, "seconds": seconds}
-    )
+    return {"status": PROCESSED} | stats | {"silver_run_ids": silver_run_ids, "seconds": seconds}
 
 
 def run(

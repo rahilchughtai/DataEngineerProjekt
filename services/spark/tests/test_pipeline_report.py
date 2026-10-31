@@ -4,27 +4,19 @@ from pathlib import Path
 
 import pytest
 from pyspark.sql import SparkSession
+from support import local
 
 from spark_jobs import pipeline_report
 from spark_jobs.lake import LakePaths
-from spark_jobs.pipeline_report import MissingReportError, build_report, run, step_reports
+from spark_jobs.pipeline_report import (
+    InvalidReportError,
+    MissingReportError,
+    build_report,
+    run,
+    step_reports,
+)
 
 RUN_ID = "20240401T060000Z-abc123"
-
-
-@pytest.fixture
-def paths(tmp_path: Path) -> LakePaths:
-    root = tmp_path.as_uri()
-    return LakePaths(
-        bronze=f"{root}/bronze",
-        silver=f"{root}/silver",
-        gold=f"{root}/gold",
-        dataset="yellow_tripdata",
-    )
-
-
-def local(path: str) -> Path:
-    return Path(path.removeprefix("file://"))
 
 
 def put_reports(paths: LakePaths, skip: str | None = None) -> None:
@@ -90,6 +82,21 @@ def test_missing_step_report_fails(spark: SparkSession, paths: LakePaths) -> Non
     put_reports(paths, skip="gold-job")
 
     with pytest.raises(MissingReportError, match="gold-job"):
+        run(spark, paths, RUN_ID, "2024Q1")
+    assert not local(paths.pipeline_report(RUN_ID)).exists()
+
+
+@pytest.mark.parametrize(
+    ("content", "match"),
+    [("{kaputt", "kein gültiges JSON"), ("[]", "kein JSON-Objekt"), ('{"counts": {}}', "seconds")],
+)
+def test_invalid_step_report_fails(
+    spark: SparkSession, paths: LakePaths, content: str, match: str
+) -> None:
+    put_reports(paths)
+    local(paths.gold_run_report(RUN_ID)).write_text(content, encoding="utf-8")
+
+    with pytest.raises(InvalidReportError, match=match):
         run(spark, paths, RUN_ID, "2024Q1")
     assert not local(paths.pipeline_report(RUN_ID)).exists()
 

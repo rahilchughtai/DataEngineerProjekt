@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from support import FEBRUARY, JANUARY, RERUN_ID, RUN_ID, local
 
 from pipeline_common.periods import Month
 from spark_jobs import lake
@@ -19,10 +20,7 @@ from spark_jobs.silver_to_gold import (
     run,
 )
 
-JANUARY = Month(2024, 1)
-FEBRUARY = Month(2024, 2)
-RUN_ID = "20240401T000000Z"
-SILVER_RUN_ID = "20240331T000000Z"
+SILVER_RUN_ID = "20240331T000000Z-0a1b2c"
 # Drei Zonen statt 265, damit die Tests nicht für jeden Monat 197.160 Zeilen lokal rechnen.
 ZONES = (1, 161, 237)
 HOURS_JANUARY = 31 * 24
@@ -45,17 +43,6 @@ TRIP: dict[str, Any] = {
     "payment_type": 1,
     "_run_id": SILVER_RUN_ID,
 }
-
-
-@pytest.fixture
-def paths(tmp_path: Path) -> LakePaths:
-    root = tmp_path.as_uri()
-    return LakePaths(
-        bronze=f"{root}/bronze",
-        silver=f"{root}/silver",
-        gold=f"{root}/gold",
-        dataset="yellow_tripdata",
-    )
 
 
 @pytest.fixture
@@ -86,7 +73,7 @@ def gold(spark: SparkSession, paths: LakePaths) -> DataFrame:
 
 
 def gold_partition(paths: LakePaths, month: str) -> Path:
-    return Path(paths.gold_table().removeprefix("file://")) / "year=2024" / f"month={month}"
+    return local(paths.gold_table()) / "year=2024" / f"month={month}"
 
 
 @pytest.mark.parametrize(
@@ -195,12 +182,12 @@ def test_rerun_is_idempotent(
     put_silver(JANUARY, silver(at(15, 8)))
 
     process_month(spark, JANUARY, paths, RUN_ID, ZONES)
-    process_month(spark, JANUARY, paths, "20240402T000000Z", ZONES)
+    process_month(spark, JANUARY, paths, RERUN_ID, ZONES)
 
     rows = gold(spark, paths).collect()
     assert len(rows) == len(ZONES) * HOURS_JANUARY
     assert sum(r["trip_count"] for r in rows) == 1
-    assert {r["_run_id"] for r in rows} == {"20240402T000000Z"}
+    assert {r["_run_id"] for r in rows} == {RERUN_ID}
 
 
 def test_rerun_leaves_other_months_untouched(
@@ -211,7 +198,7 @@ def test_rerun_leaves_other_months_untouched(
     process_month(spark, JANUARY, paths, RUN_ID, ZONES)
     process_month(spark, FEBRUARY, paths, RUN_ID, ZONES)
 
-    process_month(spark, JANUARY, paths, "20240402T000000Z", ZONES)
+    process_month(spark, JANUARY, paths, RERUN_ID, ZONES)
 
     by_month = gold(spark, paths).groupBy("month").agg(F.sum("trip_count").alias("trips"))
     trips = {r["month"]: r["trips"] for r in by_month.collect()}
@@ -231,7 +218,7 @@ def test_reconciliation_failure_keeps_previous_month(
 
     # Eine Fahrt außerhalb des Rasters fiele beim Join still weg; der Abgleich muss das bemerken.
     put_silver(JANUARY, silver(at(15, 8), at(15, 9) | {"pu_location_id": 42}))
-    entry = process_month(spark, JANUARY, paths, "20240402T000000Z", ZONES)
+    entry = process_month(spark, JANUARY, paths, RERUN_ID, ZONES)
 
     assert entry["status"] == "failed"
     assert "Gold enthält 1 Fahrten, Silver 2" in entry["error"]
@@ -266,7 +253,7 @@ def test_write_failure_discards_month(
         raise OSError("Schreibfehler")
 
     monkeypatch.setattr(lake, "write_partition", fail)
-    entry = process_month(spark, JANUARY, paths, "20240402T000000Z", ZONES)
+    entry = process_month(spark, JANUARY, paths, RERUN_ID, ZONES)
 
     assert entry["status"] == "failed"
     assert not gold_partition(paths, "01").exists()
@@ -281,5 +268,5 @@ def test_run_writes_report(
 
     assert report["job"] == "silver_to_gold"
     assert report["counts"] == {"processed": 1, "missing": 1}
-    stored = json.loads(Path(paths.gold_run_report(RUN_ID).removeprefix("file://")).read_text())
+    stored = json.loads(local(paths.gold_run_report(RUN_ID)).read_text())
     assert stored == report

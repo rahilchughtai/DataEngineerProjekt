@@ -15,10 +15,14 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from pipeline_common.env import required
+from pipeline_common.layout import month_prefix, runs_key
 from pipeline_common.periods import Month
-from pipeline_common.reports import runs_key
 
 log = logging.getLogger(__name__)
+
+PARTITION_COLUMNS = ("year", "month")
+# Spalten, die with_lineage an jede Silver- und Gold-Zeile anhängt.
+LINEAGE_COLUMNS = ("_run_id", "_processed_at", *PARTITION_COLUMNS)
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,7 @@ class LakePaths:
         )
 
     def bronze_month(self, month: Month) -> str:
-        return partition_path(f"{self.bronze}/{self.dataset}", month)
+        return f"{self.bronze}/{month_prefix(self.dataset, month)}"
 
     def bronze_run_report(self, run_id: str) -> str:
         return f"{self.bronze}/{runs_key(self.dataset, run_id)}"
@@ -117,7 +121,7 @@ def write_partition(
         df.write.mode("overwrite")
         # Idempotenz: dynamic ersetzt nur die Partitionen, die dieser Schreibvorgang enthält.
         .option("partitionOverwriteMode", "dynamic")
-        .partitionBy("year", "month")
+        .partitionBy(*PARTITION_COLUMNS)
         .parquet(table)
     )
 
@@ -138,11 +142,9 @@ def removed_on_failure(spark: SparkSession, month: Month, tables: Iterable[str])
 
 
 def with_lineage(df: DataFrame, month: Month, run_id: str, processed_at: datetime) -> DataFrame:
-    """Ergänzt Lineage- und Partitionsspalten eines Monats."""
-    return (
-        df.withColumn("_run_id", F.lit(run_id))
-        .withColumn("_processed_at", F.lit(processed_at))
-        # Als zweistelliger String, damit die Pfade wie in Bronze year=YYYY/month=MM heißen.
-        .withColumn("year", F.lit(f"{month.year:04d}"))
-        .withColumn("month", F.lit(f"{month.month:02d}"))
-    )
+    """Ergänzt Lineage- und Partitionsspalten (LINEAGE_COLUMNS) eines Monats."""
+    df = df.withColumn("_run_id", F.lit(run_id)).withColumn("_processed_at", F.lit(processed_at))
+    # Als zweistellige Strings, damit die Pfade wie in Bronze year=YYYY/month=MM heißen.
+    for name in PARTITION_COLUMNS:
+        df = df.withColumn(name, F.lit(month.partition_values[name]))
+    return df
