@@ -1,7 +1,7 @@
-"""Fixtures des End-to-End-Tests: S3-Zugriff je Identität, Testdaten und Laufbericht.
+"""Fixtures of the end-to-end test: S3 access per identity, test data and run report.
 
-Der Test läuft als Container e2e-tests am Ende der Kette aus docker-compose.test.yml und liest
-danach nur noch den Data Lake.
+The test runs as the e2e-tests container at the end of the chain from docker-compose.test.yml
+and then only reads the data lake.
 """
 
 import json
@@ -18,13 +18,13 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures" / "trip-data"
 PERIOD = "2024Q1"
 BUCKETS = ("bronze", "silver", "gold")
-# Identitäten und Rechte aus seaweedfs/s3.template.json (kopiert der Dockerfile neben die Tests).
+# Identities and rights from seaweedfs/s3.template.json (the Dockerfile copies it here).
 IDENTITIES: list[dict[str, Any]] = json.loads((HERE / "s3.template.json").read_text())["identities"]
 ADMIN = next(identity for identity in IDENTITIES if "Admin" in identity["actions"])
 
 
 def credentials(identity: dict[str, Any]) -> tuple[str, str]:
-    # Platzhalter wie __S3_ADMIN_ACCESS_KEY__ ersetzt der SeaweedFS-Entrypoint durch diese Variable.
+    # The SeaweedFS entrypoint swaps placeholders like __S3_ADMIN_ACCESS_KEY__ for this variable.
     (credential,) = identity["credentials"]
     return os.environ[credential["accessKey"].strip("_")], os.environ[
         credential["secretKey"].strip("_")
@@ -66,7 +66,7 @@ def lake_fs() -> fs.S3FileSystem:
 
 @pytest.fixture(scope="session")
 def report(s3: Any) -> dict[str, dict[str, Any]]:
-    """Laufbericht des Quartals: Monat → Zähler (JSON Lines, eine Zeile je Monat)."""
+    """Run report of the quarter: month → counters (JSON Lines, one line per month)."""
     (key,) = [k for k in keys(s3, "gold", f"_reports/{PERIOD}/") if k.endswith(".json")]
     lines = s3.get_object(Bucket="gold", Key=key)["Body"].read().decode().splitlines()
     return {row["month"]: row for row in map(json.loads, lines)}

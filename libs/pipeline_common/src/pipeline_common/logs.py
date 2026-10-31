@@ -1,10 +1,10 @@
-"""Einheitliches Log-Format aller Services, damit die Logs der Kette gleich aussehen."""
+"""Shared log format for all services, so the logs of the chain look the same."""
 
 import logging
 
 
 def setup_logging(*quiet: str) -> None:
-    """Loggt ab INFO; die Logger in quiet (z. B. Bibliotheken) erst ab WARNING."""
+    """Logs from INFO; the loggers in quiet (e.g. libraries) only from WARNING."""
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )

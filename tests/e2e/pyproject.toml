@@ -14,5 +14,5 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["."]
-# Ohne Cache: im Image gehört /app nicht dem Testnutzer.
+# No cache: in the image /app is not owned by the test user.
 addopts = "-ra --strict-markers -p no:cacheprovider"

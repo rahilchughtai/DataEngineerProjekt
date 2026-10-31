@@ -1,10 +1,10 @@
-"""Laufbericht: zählt nach Gold je Monat die Zeilen in allen Schichten und hält fest, wann.
+"""Run report: after gold, counts the rows of each month in all layers and records when.
 
-Der Bericht entsteht aus den Daten selbst, nicht aus Angaben der einzelnen Schritte, und liegt als
-JSON unter gold/_reports/<INGEST_PERIOD>/. Es muss gelten:
-bronze_rows = silver_rows + quarantined_rows + duplicates und gold_trips = silver_rows.
-Die Zeitpunkte bronze_loaded_at ≤ silver_processed_at ≤ gold_processed_at zeigen die Latenz
-jeder Stufe: vom Ablegen der Quelldatei bis zu fertigen Features.
+The report is derived from the data itself, not from what the individual steps report, and is
+stored as JSON under gold/_reports/<INGEST_PERIOD>/. It must hold that
+bronze_rows = silver_rows + quarantined_rows + duplicates and gold_trips = silver_rows.
+The timestamps bronze_loaded_at ≤ silver_processed_at ≤ gold_processed_at show the latency of
+each stage: from storing the source file to finished features.
 """
 
 import logging
@@ -29,7 +29,7 @@ def month_report(spark: SparkSession, year: int, month: int) -> dict:
         return spark.read.parquet(month_path(table, year, month))
 
     rows, latest = F.count("*").alias("rows"), F.max("_processed_at").alias("at")
-    # Wann die Ingestion die Datei abgelegt hat: Änderungszeit des Objekts in Bronze.
+    # When ingestion stored the file: modification time of the object in bronze.
     bronze = (
         read(BRONZE)
         .agg(F.count("*").alias("rows"), F.max("_metadata.file_modification_time").alias("at"))

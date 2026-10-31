@@ -1,8 +1,8 @@
-"""Ingestion: lädt die TLC-Monatsdateien des Zeitraums unverändert in die Bronze-Schicht.
+"""Ingestion: loads the TLC monthly files of the period unchanged into the bronze layer.
 
-Je Monat: Existiert die Datei schon in Bronze, wird sie übersprungen (idempotent). Sonst wird sie
-von der TLC gestreamt und unter bronze/yellow_tripdata/year=YYYY/month=MM/ abgelegt. Ein Fehler
-bricht den Lauf ab; docker compose startet die Spark-Jobs dann nicht.
+Per month: if the file already exists in bronze, it is skipped (idempotent). Otherwise it is
+streamed from the TLC and stored under bronze/yellow_tripdata/year=YYYY/month=MM/. A failure
+aborts the run; docker compose then does not start the Spark jobs.
 """
 
 import logging
@@ -34,12 +34,12 @@ def object_key(year: int, month: int) -> str:
 
 def http_session() -> requests.Session:
     session = requests.Session()
-    # Bis zu 5 Wiederholungen mit wachsender Pause bei Verbindungsfehlern, 429 und 5xx.
-    # 403/404 heißt: Monat (noch) nicht veröffentlicht, das ist sofort ein Fehler.
+    # Up to 5 retries with growing backoff on connection errors, 429 and 5xx.
+    # 403/404 means the month is not published (yet), which fails immediately.
     retry = Retry(total=5, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504])
     session.mount("http://", HTTPAdapter(max_retries=retry))
     session.mount("https://", HTTPAdapter(max_retries=retry))
-    # Unkomprimiert laden, damit Bronze byte-gleich zur Quelle ist.
+    # Download uncompressed so bronze is byte-identical to the source.
     session.headers["Accept-Encoding"] = "identity"
     return session
 
@@ -62,14 +62,14 @@ def ingest_month(s3, http: requests.Session, base_url: str, year: int, month: in
     url = f"{base_url}/{file_name(year, month)}"
     with http.get(url, stream=True, timeout=60) as response:
         response.raise_for_status()
-        # Ein Upload legt das Objekt erst am Ende an: bei einem Abbruch bleibt kein halber Monat.
+        # An upload creates the object only at the end: an abort leaves no half month behind.
         s3.upload_fileobj(response.raw, BUCKET, key)
     log.info("%s → s3://%s/%s", url, BUCKET, key)
 
 
 def main() -> None:
     setup_logging()
-    # Eigene Identität mit Schreibrecht nur auf bronze (Least Privilege, siehe seaweedfs/).
+    # Own identity with write access to bronze only (least privilege, see seaweedfs/).
     s3 = boto3.client(
         "s3",
         endpoint_url=os.environ["S3_ENDPOINT"],

@@ -14,8 +14,8 @@ dev = [
 [tool.uv]
 package = false
 
-# Zentrale Ruff-Konfiguration für alle Services. services/spark erbt sie per extend und setzt
-# nur target-version auf py310 (Python des Spark-Images).
+# Central Ruff config for all services. services/spark inherits it via extend and only sets
+# target-version to py310 (Python of the Spark image).
 [tool.ruff]
 line-length = 100
 target-version = "py312"
