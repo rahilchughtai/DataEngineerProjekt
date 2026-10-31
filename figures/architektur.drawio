@@ -13,7 +13,7 @@
         <mxCell id="docker" value="Docker Compose" style="swimlane;startSize=34;rounded=1;arcSize=3;html=1;fillColor=#E0F2FE;swimlaneFillColor=#F8FAFC;strokeColor=#0EA5E9;strokeWidth=2;fontColor=#0C4A6E;fontStyle=1;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="250" y="90" width="900" height="560" as="geometry"/>
         </mxCell>
-        <mxCell id="orch" value="&lt;b&gt;Orchestrierung&lt;/b&gt; · Python-Skript&lt;br&gt;&lt;span style=&quot;font-size:11px;color:#64748B&quot;&gt;startet Services nacheinander&lt;/span&gt;" style="rounded=1;arcSize=14;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8B5CF6;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=13;" vertex="1" parent="docker">
+        <mxCell id="orch" value="&lt;b&gt;Orchestrierung&lt;/b&gt; · depends_on&lt;br&gt;&lt;span style=&quot;font-size:11px;color:#64748B&quot;&gt;startet Services nacheinander&lt;/span&gt;" style="rounded=1;arcSize=14;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8B5CF6;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=13;" vertex="1" parent="docker">
           <mxGeometry x="20" y="50" width="860" height="56" as="geometry"/>
         </mxCell>
         <mxCell id="ing" value="&lt;b&gt;Ingestion-Service&lt;/b&gt;&lt;br&gt;Python&lt;br&gt;&lt;span style=&quot;font-size:11px;color:#64748B&quot;&gt;Download der Monatsdaten&lt;/span&gt;" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#3B82F6;strokeWidth=2;shadow=1;fontColor=#1F2937;fontSize=13;" vertex="1" parent="docker">
