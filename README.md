@@ -24,7 +24,7 @@ Die editierbare Quelle des Diagramms liegt in [figures/architektur.drawio](figur
 
 | Schritt (Compose-Service) | Code | Liest | Schreibt |
 |---|---|---|---|
-| `lake-init` | [seaweedfs/init-buckets.sh](seaweedfs/init-buckets.sh) | – | Buckets `bronze`, `silver`, `gold` |
+| `lake-init` | [services/ingestion/init-buckets.py](services/ingestion/init-buckets.py) | – | Buckets `bronze`, `silver`, `gold` |
 | `ingestion` | [services/ingestion/ingest.py](services/ingestion/ingest.py) | TLC-Monatsdateien | `bronze/yellow_tripdata/year=YYYY/month=MM/` |
 | `silver-job` | [services/spark/jobs/bronze_to_silver.py](services/spark/jobs/bronze_to_silver.py) | Bronze | `silver/yellow_tripdata/…`, abgelehnte Zeilen in `silver/_quarantine/yellow_tripdata/…` |
 | `gold-job` | [services/spark/jobs/silver_to_gold.py](services/spark/jobs/silver_to_gold.py) | Silver | `gold/yellow_tripdata/zone_hourly/…` |

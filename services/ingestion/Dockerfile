@@ -9,7 +9,7 @@ COPY libs/pipeline_common/src ./libs/pipeline_common/src
 WORKDIR /app/services/ingestion
 COPY services/ingestion/pyproject.toml services/ingestion/uv.lock ./
 RUN uv sync --frozen --no-dev --no-cache
-COPY services/ingestion/ingest.py ./
+COPY services/ingestion/ingest.py services/ingestion/init-buckets.py ./
 
 # Ohne Root-Rechte laufen (Least Privilege).
 RUN useradd --system --uid 10001 ingestion
