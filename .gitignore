@@ -12,10 +12,6 @@ __pycache__/
 
 # Lokale Daten
 data/
-# Laufberichte von run-report; das Verzeichnis selbst ist eingecheckt, weil Podman fehlende
-# Bind-Mount-Quellen nicht anlegt
-runs/*
-!runs/.gitkeep
 *.parquet
 # Gekürzte echte TLC-Dateien für den End-to-End-Test
 !tests/e2e/fixtures/trip-data/*.parquet

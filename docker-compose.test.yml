@@ -1,28 +1,26 @@
-# End-to-End-Test: dieselbe Pipeline wie docker-compose.yml, nur mit Mock-Quelle statt CloudFront
-# und einem Test-Container am Ende der Kette. Ein Befehl für Laptop und CI (Podman: podman compose):
+# End-to-End-Test: dieselbe Pipeline wie docker-compose.yml, nur mit einer Mock-Quelle statt der TLC
+# und einem Test-Container am Ende der Kette:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example \
 #     run --build --rm e2e-tests
 #   docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example down -v
 #
-# Eigenes Projekt mit eigenen Volumes und Netzen und ohne Host-Ports: Ein Testlauf berührt nie den
-# lokalen Data Lake und darf neben der normalen Umgebung laufen.
+# Eigenes Projekt mit eigenen Volumes und ohne Host-Ports: berührt nie den lokalen Data Lake.
 name: taxi-pipeline-test
 
-# Das Quartal, für das tests/e2e/fixtures Dateien enthält.
-x-period: &period
-  INGEST_PERIOD: "2024Q1"
+# Das Quartal, für das tests/e2e/fixtures Dateien enthält; ein kleiner Executor reicht dafür.
+x-test-job: &test-job
+  environment:
+    INGEST_PERIOD: "2024Q1"
+    SPARK_EXECUTOR_MEMORY: 512m
 
 services:
-  # Ersetzt CloudFront: liefert die gekürzten echten TLC-Dateien aus tests/e2e/fixtures mit ETag
-  # und Last-Modified und antwortet für nicht veröffentlichte Monate wie CloudFront mit 403.
+  # Liefert gekürzte echte TLC-Dateien (2.000 Fahrten je Monat) und für fehlende Monate wie die TLC 403.
   tlc-mock:
     image: docker.io/library/nginx:1.29.1-alpine
     volumes:
       - ./tests/e2e/tlc-mock/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./tests/e2e/fixtures/trip-data:/srv/trip-data:ro
-    networks: [lakenet]
-    restart: "no"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
       interval: 2s
@@ -37,47 +35,31 @@ services:
 
   ingestion:
     environment:
+      INGEST_PERIOD: "2024Q1"
       TLC_BASE_URL: http://tlc-mock/trip-data
-      <<: *period
-      DOWNLOAD_BACKOFF_SECONDS: "0.5"
     depends_on:
       tlc-mock:
         condition: service_healthy
 
-  # Kleiner Cluster: 2.000 Fahrten je Monat brauchen keine zwei Worker, und lokale VMs (Podman
-  # Machine) haben oft nur 2 GiB RAM. Die Executor-Grenze muss unter SPARK_WORKER_MEMORY liegen.
+  # Ein kleiner Worker genügt für die Testdaten und passt in lokale VMs mit 2 GiB RAM.
   spark-worker:
     deploy:
       replicas: 1
     environment:
       SPARK_WORKER_MEMORY: 1g
 
-  silver-job:
-    environment:
-      <<: *period
-      SPARK_EXECUTOR_MEMORY: 512m
+  silver-job: *test-job
+  gold-job: *test-job
+  report: *test-job
 
-  gold-job:
-    environment:
-      <<: *period
-      SPARK_EXECUTOR_MEMORY: 512m
-
-  # Die Host-Kopie geht in ein Volume statt ins Repo; e2e-tests vergleicht sie mit dem Lake.
-  run-report:
-    environment: *period
-    volumes: !override
-      - pipeline-run:/run/pipeline:ro
-      - runs-export:/runs
-
-  # Prüft den Lake nach dem Lauf. Startet nur, wenn alle Schritte erfolgreich waren; sein Exit-Code
-  # ist das Ergebnis des Tests. Braucht alle Identitäten, weil er deren Zugriffsrechte prüft.
+  # Prüft den Lake nach dem Lauf; startet nur, wenn alle Schritte erfolgreich waren. Braucht alle
+  # Identitäten, weil er deren Zugriffsrechte prüft.
   e2e-tests:
     build:
       context: .
       dockerfile: tests/e2e/Dockerfile
     image: localhost/taxi-pipeline/e2e-tests:0.1.0
     environment:
-      <<: *period
       S3_ENDPOINT: http://seaweedfs:8333
       S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}
       S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?siehe .env.example}
@@ -87,31 +69,7 @@ services:
       S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
       S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?siehe .env.example}
       S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?siehe .env.example}
-      BRONZE_BUCKET: bronze
-      SILVER_BUCKET: silver
-      GOLD_BUCKET: gold
-      TLC_BASE_URL: http://tlc-mock/trip-data
-      PIPELINE_RUN_ID_FILE: /run/pipeline/run-id
-      RUNS_DIR: /runs
-    volumes:
-      - pipeline-run:/run/pipeline:ro
-      - runs-export:/runs:ro
     depends_on:
-      run-report:
+      report:
         condition: service_completed_successfully
-    networks: [lakenet]
     restart: "no"
-
-networks:
-  lakenet:
-    name: taxi-pipeline-test-lakenet
-  sparknet:
-    name: taxi-pipeline-test-sparknet
-
-volumes:
-  seaweedfs-data:
-    name: taxi-pipeline-test-seaweedfs-data
-  pipeline-run:
-    name: taxi-pipeline-test-run
-  runs-export:
-    name: taxi-pipeline-test-runs
