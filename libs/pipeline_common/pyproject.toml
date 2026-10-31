@@ -1,7 +1,7 @@
 [project]
 name = "pipeline-common"
 version = "0.1.0"
-description = "Gemeinsame Helfer der Pipeline-Services: Zeiträume, Run-ID, Umgebung, Logging und Run-Reports."
+description = "Zeitraum und Monatspartitionen, die Ingestion und Spark gemeinsam verwenden."
 # Läuft in beiden Images: Ingestion (Python 3.12) und Spark (Python 3.10).
 requires-python = ">=3.10,<3.13"
 dependencies = []
