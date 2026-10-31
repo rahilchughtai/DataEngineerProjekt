@@ -12,6 +12,9 @@ if [ "${#signing_key}" -lt 32 ]; then
 fi
 
 CONFIG=/etc/seaweedfs/s3.json
+# Die gerenderte Datei enthält die Zugangsdaten und ist von Anfang an nur für den Besitzer lesbar.
+default_umask=$(umask)
+umask 077
 cp /etc/seaweedfs/s3.json.template "$CONFIG"
 
 for var in S3_ADMIN_ACCESS_KEY S3_ADMIN_SECRET_KEY \
@@ -32,6 +35,7 @@ for var in S3_ADMIN_ACCESS_KEY S3_ADMIN_SECRET_KEY \
   sed -i "s|__${var}__|${value}|g" "$CONFIG"
 done
 chmod 600 "$CONFIG"
+umask "$default_umask"
 
 exec weed server \
   -dir=/data \
