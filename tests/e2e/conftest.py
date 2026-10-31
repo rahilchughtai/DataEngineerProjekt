@@ -18,8 +18,8 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures" / "trip-data"
 PERIOD = "2024Q1"
 BUCKETS = ("bronze", "silver", "gold")
-# Identitäten und Rechte aus seaweedfs/s3.json.template (kopiert der Dockerfile neben die Tests).
-IDENTITIES: list[dict[str, Any]] = json.loads((HERE / "s3.json.template").read_text())["identities"]
+# Identitäten und Rechte aus seaweedfs/s3.template.json (kopiert der Dockerfile neben die Tests).
+IDENTITIES: list[dict[str, Any]] = json.loads((HERE / "s3.template.json").read_text())["identities"]
 ADMIN = next(identity for identity in IDENTITIES if "Admin" in identity["actions"])
 
 

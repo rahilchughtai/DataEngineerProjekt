@@ -51,9 +51,10 @@ services:
 
   # Legt die Buckets über die S3-API an, falls sie fehlen. Einziger Service mit der Admin-Identität.
   lake-init:
-    image: localhost/taxi-pipeline/seaweedfs:0.1.0
-    pull_policy: never
-    entrypoint: ["/usr/local/bin/init-buckets.py"]
+    build:
+      context: ./seaweedfs
+      dockerfile: Dockerfile.init
+    image: localhost/taxi-pipeline/lake-init:0.1.0
     environment:
       S3_ENDPOINT: http://seaweedfs:8333
       S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}

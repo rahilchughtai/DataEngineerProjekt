@@ -105,7 +105,7 @@ bleiben. Nach dem Lauf laufen SeaweedFS (`http://127.0.0.1:8333`) und der Spark-
 **Datensicherheit, Governance und Datenschutz**
 
 - Least Privilege: Jeder Service bekommt nur die Zugangsdaten seiner eigenen Identität
-  ([seaweedfs/s3.json.template](seaweedfs/s3.json.template)): Die Ingestion schreibt nur
+  ([seaweedfs/s3.template.json](seaweedfs/s3.template.json)): Die Ingestion schreibt nur
   `bronze`, Spark liest `bronze` und schreibt `silver` und `gold`, die ML-Anwendung (`ml_reader`)
   liest nur `gold`. Die Spark-Worker selbst haben keine Zugangsdaten. Der End-to-End-Test prüft
   diese Rechte.

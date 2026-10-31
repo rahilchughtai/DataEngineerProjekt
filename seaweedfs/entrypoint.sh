@@ -1,41 +1,32 @@
 #!/bin/sh
-# Rendert die S3-Identitäten aus Umgebungsvariablen und startet SeaweedFS.
-# Zugangsdaten stehen nur in .env, nie im Image oder Repository.
+# Renders the S3 identities from environment variables and starts SeaweedFS.
 set -eu
 
-# Ohne Signing-Key verwirft SeaweedFS 4.x die Identitäten und läuft ohne Authentifizierung.
-# Deshalb hier hart abbrechen statt offen zu starten (fail closed).
-signing_key=${WEED_JWT_FILER_SIGNING_KEY:-}
-if [ "${#signing_key}" -lt 32 ]; then
-  echo "entrypoint: SEAWEEDFS_SIGNING_KEY fehlt oder ist kürzer als 32 Zeichen" >&2
-  exit 1
-fi
-
+TEMPLATE=/etc/seaweedfs/s3.template.json
 CONFIG=/etc/seaweedfs/s3.json
-# Die Ersetzungen werden zuerst gesammelt und dann in einem Durchgang geschrieben: Es entsteht keine
-# Zwischendatei, und die umask gilt, bevor die Datei mit den Zugangsdaten überhaupt angelegt wird.
-default_umask=$(umask)
-umask 077
-substitutions=""
-for var in S3_ADMIN_ACCESS_KEY S3_ADMIN_SECRET_KEY \
-           S3_INGESTION_ACCESS_KEY S3_INGESTION_SECRET_KEY \
-           S3_SPARK_ACCESS_KEY S3_SPARK_SECRET_KEY \
-           S3_ML_ACCESS_KEY S3_ML_SECRET_KEY; do
+
+fail() {
+  echo "entrypoint: $*" >&2
+  exit 1
+}
+
+key=${WEED_JWT_FILER_SIGNING_KEY:-}
+[ "${#key}" -ge 32 ] || fail "WEED_JWT_FILER_SIGNING_KEY is missing or shorter than 32 characters."
+
+(umask 077; cp "$TEMPLATE" "$CONFIG")
+
+# Every __NAME__ in the template must come from the environment.
+for placeholder in $(grep -o '__[A-Z0-9_]*__' "$TEMPLATE" | sort -u); do
+  var=${placeholder#__}
+  var=${var%__}
   value=$(printenv "$var" || true)
-  if [ -z "$value" ]; then
-    echo "entrypoint: $var ist nicht gesetzt (siehe .env.example)" >&2
-    exit 1
-  fi
+  [ -n "$value" ] || fail "missing value for $var"
+  # Restricted charset keeps sed and JSON safe without escaping.
   case "$value" in
-    *[!A-Za-z0-9_-]*)
-      echo "entrypoint: $var darf nur A-Z, a-z, 0-9, _ und - enthalten" >&2
-      exit 1
-      ;;
+    *[!A-Za-z0-9_-]*) fail "invalid value for $var (allowed: A-Z, a-z, 0-9, _ and -)" ;;
   esac
-  substitutions="${substitutions}s|__${var}__|${value}|g;"
+  sed -i "s|${placeholder}|${value}|g" "$CONFIG"
 done
-sed "$substitutions" /etc/seaweedfs/s3.json.template > "$CONFIG"
-umask "$default_umask"
 
 exec weed server \
   -dir=/data \
