@@ -54,6 +54,9 @@ mittlere Distanz, Dauer und Beträge sowie Stunde, Wochentag und Wochenende als 
 `silver_rows`, `quarantined_rows` mit `rejected_by_reason`, `duplicates`, `gold_rows`,
 `gold_trips`). Er entsteht aus den Daten selbst, deshalb muss immer
 `bronze_rows = silver_rows + quarantined_rows + duplicates` und `gold_trips = silver_rows` gelten.
+Dazu hält er je Monat fest, wann die Stufen fertig waren (`bronze_loaded_at`,
+`silver_processed_at`, `gold_processed_at`); die Abstände zeigen die Latenz jeder Stufe, vom
+Ablegen der Quelldatei bis zu fertigen Features.
 
 ## Start
 

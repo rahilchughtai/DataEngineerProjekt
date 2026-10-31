@@ -43,6 +43,9 @@ def test_report_adds_up(report: dict[str, dict[str, Any]]) -> None:
         # Die Testdaten enthalten echte fehlerhafte Fahrten, also muss die Quarantäne greifen.
         assert row["silver_rows"] > 0 and row["quarantined_rows"] > 0, month
         assert row["gold_trips"] == row["silver_rows"], month
+        # Jede Stufe baut auf der vorigen auf (ISO-Zeitstempel in UTC sind als Text sortierbar).
+        stages = [row["bronze_loaded_at"], row["silver_processed_at"], row["gold_processed_at"]]
+        assert stages == sorted(stages), month
 
 
 def test_silver_pickups_lie_in_their_month(
