@@ -21,34 +21,48 @@ class Month:
     def __str__(self) -> str:
         return f"{self.year:04d}-{self.month:02d}"
 
+    @property
+    def partition(self) -> str:
+        """Hive-Partition des Monats, wie sie alle Schichten im Lake verwenden."""
+        return f"year={self.year:04d}/month={self.month:02d}"
+
     def next(self) -> "Month":
         if self.month == 12:
             return Month(self.year + 1, 1)
         return Month(self.year, self.month + 1)
 
 
+def _month(match: re.Match[str]) -> Month:
+    return Month(int(match[1]), int(match[2]))
+
+
+def _quarter(match: re.Match[str]) -> list[Month]:
+    year, quarter = int(match[1]), int(match[2])
+    first = 3 * (quarter - 1) + 1
+    return [Month(year, m) for m in range(first, first + 3)]
+
+
 def parse_month(value: str) -> Month:
     match = _MONTH_RE.match(value.strip())
     if not match:
         raise ValueError(f"Monat muss im Format YYYY-MM angegeben werden, nicht {value!r}")
-    return Month(int(match[1]), int(match[2]))
+    return _month(match)
 
 
 def quarter_months(value: str) -> list[Month]:
     match = _QUARTER_RE.match(value.strip())
     if not match:
         raise ValueError(f"Quartal muss im Format YYYYQn angegeben werden, nicht {value!r}")
-    year, quarter = int(match[1]), int(match[2])
-    first = 3 * (quarter - 1) + 1
-    return [Month(year, m) for m in range(first, first + 3)]
+    return _quarter(match)
 
 
 def parse_period(value: str) -> list[Month]:
     """Ein Quartal (YYYYQn) oder ein einzelner Monat (YYYY-MM)."""
-    if _QUARTER_RE.match(value.strip()):
-        return quarter_months(value)
-    if _MONTH_RE.match(value.strip()):
-        return [parse_month(value)]
+    stripped = value.strip()
+    if match := _QUARTER_RE.match(stripped):
+        return _quarter(match)
+    if match := _MONTH_RE.match(stripped):
+        return [_month(match)]
     raise ValueError(f"Zeitraum muss YYYYQn oder YYYY-MM sein, nicht {value!r}")
 
 

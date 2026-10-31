@@ -2,7 +2,7 @@ import time
 
 import pytest
 
-from pipeline_common.reports import count_statuses, exit_code, run_report
+from pipeline_common.reports import count_statuses, exit_code, run_report, runs_key
 
 
 def test_count_statuses() -> None:
@@ -31,3 +31,7 @@ def test_run_report_with_and_without_job() -> None:
 )
 def test_exit_code(counts: dict[str, int], expected: int) -> None:
     assert exit_code(counts, "not_published") == expected
+
+
+def test_runs_key() -> None:
+    assert runs_key("yellow_tripdata", "run") == "_runs/yellow_tripdata/run.json"
