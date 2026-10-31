@@ -1,4 +1,4 @@
-"""Gemeinsames der Spark-Jobs: Session, Tabellen im Data Lake und Schreiben eines Monats."""
+"""Shared parts of the Spark jobs: session, tables in the data lake and writing a month."""
 
 import os
 
@@ -7,7 +7,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pipeline_common.logs import setup_logging
 from pipeline_common.periods import months, partition
 
-# Tabellen im Data Lake (SeaweedFS S3); jede ist nach year=YYYY/month=MM partitioniert.
+# Tables in the data lake (SeaweedFS S3); each is partitioned by year=YYYY/month=MM.
 BRONZE = "s3a://bronze/yellow_tripdata"
 SILVER = "s3a://silver/yellow_tripdata"
 QUARANTINE = "s3a://silver/_quarantine/yellow_tripdata"
@@ -16,10 +16,10 @@ REPORTS = "s3a://gold/_reports"
 
 
 def start(app: str) -> SparkSession:
-    """SparkSession mit den S3-Zugangsdaten des Jobs.
+    """SparkSession with the job's S3 credentials.
 
-    Nur der Driver kennt die Zugangsdaten; die Executors auf den Workern erhalten sie über die
-    Hadoop-Konfiguration des Jobs. Endpoint und S3A-Einstellungen stehen in spark-defaults.conf.
+    Only the driver knows the credentials; the executors on the workers receive them via the
+    job's Hadoop configuration. Endpoint and S3A settings live in spark-defaults.conf.
     """
     setup_logging("py4j")
     spark = (
@@ -41,9 +41,9 @@ def month_path(table: str, year: int, month: int) -> str:
 
 
 def write_month(df: DataFrame, table: str, year: int, month: int) -> None:
-    """Überschreibt genau diesen Monat der Tabelle; alle anderen Monate bleiben unverändert.
+    """Overwrites exactly this month of the table; all other months stay unchanged.
 
-    Dadurch ist jeder Job idempotent: Ein erneuter Lauf ersetzt den Monat, statt Zeilen zu
-    verdoppeln. coalesce(1): eine Datei je Monat statt 200 kleiner Dateien nach dem Shuffle.
+    This makes every job idempotent: a rerun replaces the month instead of duplicating rows.
+    coalesce(1): one file per month instead of 200 small files after the shuffle.
     """
     df.coalesce(1).write.mode("overwrite").parquet(month_path(table, year, month))

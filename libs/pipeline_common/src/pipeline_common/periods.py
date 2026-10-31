@@ -1,7 +1,7 @@
-"""Zeitraum eines Laufs und Monatspartitionen, die Ingestion und Spark gleich verwenden.
+"""Period of a run and month partitions, used the same way by ingestion and Spark.
 
-INGEST_PERIOD ist ein Quartal (2024Q1) für den regulären Lauf oder ein Monat (2024-03), um nur
-diesen neu zu verarbeiten. Bronze, Silver und Gold liegen alle unter year=YYYY/month=MM.
+INGEST_PERIOD is a quarter (2024Q1) for the regular run or a month (2024-03) to reprocess only
+that month. Bronze, silver and gold all live under year=YYYY/month=MM.
 """
 
 import re
@@ -13,7 +13,7 @@ def months(period: str) -> list[tuple[int, int]]:
     """'2024Q1' → [(2024, 1), (2024, 2), (2024, 3)], '2024-03' → [(2024, 3)]."""
     match = _PERIOD.match(period.strip())
     if not match or (match[2] and not 1 <= int(match[2]) <= 12):
-        raise ValueError(f"INGEST_PERIOD muss YYYYQn oder YYYY-MM sein, nicht {period!r}")
+        raise ValueError(f"INGEST_PERIOD must be YYYYQn or YYYY-MM, not {period!r}")
     year = int(match[1])
     if match[2]:
         return [(year, int(match[2]))]
@@ -22,5 +22,5 @@ def months(period: str) -> list[tuple[int, int]]:
 
 
 def partition(year: int, month: int) -> str:
-    """Partition eines Monats, z. B. year=2024/month=03."""
+    """Partition of a month, e.g. year=2024/month=03."""
     return f"year={year:04d}/month={month:02d}"

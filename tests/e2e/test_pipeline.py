@@ -1,7 +1,7 @@
-"""End-to-End-Test: Mock-TLC → Ingestion → Silver → Gold → Laufbericht für 2024Q1.
+"""End-to-end test: mock TLC → ingestion → silver → gold → run report for 2024Q1.
 
-Geprüft werden Invarianten statt fest eingetragener Zahlen. In CI läuft der Test zweimal auf
-demselben Lake; dieselben Prüfungen zeigen dann, dass eine Wiederholung nichts verdoppelt.
+It checks invariants instead of hard-coded numbers. In CI the test runs twice on the same
+lake; the same checks then show that a rerun duplicates nothing.
 """
 
 import posixpath
@@ -40,10 +40,10 @@ def test_report_adds_up(report: dict[str, dict[str, Any]]) -> None:
         assert row["bronze_rows"] == source.num_rows, month
         assert row["duplicates"] == source.num_rows - distinct_rows(source), month
         assert sum(row["rejected_by_reason"].values()) == row["quarantined_rows"], month
-        # Die Testdaten enthalten echte fehlerhafte Fahrten, also muss die Quarantäne greifen.
+        # The test data contains real faulty trips, so the quarantine must catch them.
         assert row["silver_rows"] > 0 and row["quarantined_rows"] > 0, month
         assert row["gold_trips"] == row["silver_rows"], month
-        # Jede Stufe baut auf der vorigen auf (ISO-Zeitstempel in UTC sind als Text sortierbar).
+        # Each stage builds on the previous one (ISO timestamps in UTC sort as text).
         stages = [row["bronze_loaded_at"], row["silver_processed_at"], row["gold_processed_at"]]
         assert stages == sorted(stages), month
 
@@ -60,14 +60,14 @@ def test_silver_pickups_lie_in_their_month(
 
 
 def test_one_file_per_month(s3: Any) -> None:
-    """Ein überschriebener Monat darf keine Dateien früherer Läufe behalten."""
+    """An overwritten month must not keep files from earlier runs."""
     for bucket in BUCKETS:
         files = Counter(posixpath.dirname(k) for k in keys(s3, bucket) if k.endswith(".parquet"))
         assert files and set(files.values()) == {1}, (bucket, files)
 
 
 def allowed(client: Any, operation: str, bucket: str, existing_key: str) -> bool:
-    """Führt List, Read oder Write aus; False, wenn SeaweedFS den Zugriff verweigert."""
+    """Performs List, Read or Write; False if SeaweedFS denies access."""
     actions = {
         "List": lambda: client.list_objects_v2(Bucket=bucket, MaxKeys=1),
         "Read": lambda: client.get_object(Bucket=bucket, Key=existing_key),
@@ -96,5 +96,5 @@ def test_access_matches_policy(s3: Any, identity: dict[str, Any]) -> None:
             if operation == "Write" and actual:
                 s3.delete_object(Bucket=bucket, Key="_e2e/probe")
             if actual != expected:
-                mismatches.append(f"{operation}:{bucket} erwartet {expected}, erhalten {actual}")
+                mismatches.append(f"{operation}:{bucket} expected {expected}, got {actual}")
     assert not mismatches

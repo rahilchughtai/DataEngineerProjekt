@@ -12,7 +12,7 @@ FILE_URL = f"{URL}/yellow_tripdata_2024-03.parquet"
 
 
 class FakeS3:
-    """Minimaler Ersatz für den boto3-Client."""
+    """Minimal stand-in for the boto3 client."""
 
     def __init__(self, existing: set[str] | None = None) -> None:
         self.objects = dict.fromkeys(existing or set(), b"")
@@ -52,10 +52,38 @@ def test_existing_month_is_skipped() -> None:
 
 @responses.activate
 def test_unpublished_month_fails_without_upload() -> None:
-    # CloudFront antwortet für fehlende Dateien mit 403.
+    # CloudFront answers 403 for missing files.
     responses.get(FILE_URL, status=403)
     s3 = FakeS3()
 
     with pytest.raises(requests.HTTPError):
         ingest.ingest_month(s3, ingest.http_session(), URL, 2024, 3)
+    assert s3.objects == {}
+
+
+@pytest.fixture
+def no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ingest.time, "sleep", lambda _: None)
+
+
+@responses.activate
+def test_retries_after_connection_error(no_sleep: None) -> None:
+    responses.get(FILE_URL, body=requests.ConnectionError("reset"))
+    responses.get(FILE_URL, body=b"PAR1 data PAR1")
+    s3 = FakeS3()
+
+    ingest.ingest_month(s3, ingest.http_session(), URL, 2024, 3)
+
+    assert s3.objects[ingest.object_key(2024, 3)] == b"PAR1 data PAR1"
+    assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_gives_up_after_all_attempts(no_sleep: None) -> None:
+    responses.get(FILE_URL, body=requests.ConnectionError("reset"))
+    s3 = FakeS3()
+
+    with pytest.raises(requests.ConnectionError):
+        ingest.ingest_month(s3, ingest.http_session(), URL, 2024, 3)
+    assert len(responses.calls) == ingest.ATTEMPTS
     assert s3.objects == {}

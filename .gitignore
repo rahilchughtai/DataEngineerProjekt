@@ -1,4 +1,4 @@
-# Zugangsdaten
+# Credentials
 .env
 
 # Python / uv
@@ -10,12 +10,13 @@ __pycache__/
 .pytest_cache/
 .coverage
 
-# Lokale Daten
+# Local data
 data/
 *.parquet
-# Gekürzte echte TLC-Dateien für den End-to-End-Test
+# Truncated real TLC files for the end-to-end test
 !tests/e2e/fixtures/trip-data/*.parquet
 .vscode/
 graphify-out/*
 !graphify-out/graph.json
 !graphify-out/GRAPH_REPORT.md
+skills-lock.json

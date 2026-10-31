@@ -1,4 +1,4 @@
-"""Job 2, Silver → Gold: stündliche Nachfrage je Pickup-Zone als Features für die ML-Anwendung."""
+"""Job 2, silver → gold: hourly demand per pickup zone as features for the ML application."""
 
 import logging
 
@@ -11,7 +11,7 @@ log = logging.getLogger("silver_to_gold")
 
 
 def hourly_demand(silver: DataFrame) -> DataFrame:
-    """Eine Zeile je Pickup-Zone und Stunde mit Fahrten: Anzahl, Mittelwerte, Kalendermerkmale."""
+    """One row per pickup zone and hour with trips: count, averages, calendar features."""
     duration_minutes = F.timestamp_diff("SECOND", "pickup_datetime", "dropoff_datetime") / 60
     return (
         silver.groupBy(
@@ -25,7 +25,7 @@ def hourly_demand(silver: DataFrame) -> DataFrame:
             F.avg("total_amount").alias("avg_total_amount"),
         )
         .withColumn("hour_of_day", F.hour("pickup_hour"))
-        # weekday zählt ab 0 = Montag; day_of_week also 1 = Montag bis 7 = Sonntag.
+        # weekday counts from 0 = Monday; so day_of_week is 1 = Monday to 7 = Sunday.
         .withColumn("day_of_week", F.weekday("pickup_hour") + 1)
         .withColumn("is_weekend", F.col("day_of_week") >= 6)
         .withColumn("_processed_at", F.current_timestamp())
@@ -37,7 +37,7 @@ def main() -> None:
     for year, month in period_months():
         silver = spark.read.parquet(month_path(SILVER, year, month))
         write_month(hourly_demand(silver), GOLD, year, month)
-        log.info("%04d-%02d: Gold geschrieben", year, month)
+        log.info("%04d-%02d: gold written", year, month)
     spark.stop()
 
 

@@ -1,4 +1,4 @@
-# LF überall, damit Skripte aus einem Windows-Clone im Linux-Container laufen.
+# LF everywhere so scripts from a Windows clone run in the Linux container.
 * text=auto eol=lf
 
 *.png binary

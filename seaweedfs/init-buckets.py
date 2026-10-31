@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Legt die Buckets der Lake-Schichten über die S3-API an.
+"""Creates the buckets of the lake layers via the S3 API.
 
-Idempotent: vorhandene Buckets bleiben unverändert. Läuft mit der Admin-Identität, weil nur sie
-Buckets anlegen darf; die Pipeline-Services erhalten diese Zugangsdaten nie.
+Idempotent: existing buckets stay unchanged. Runs with the admin identity because only it may
+create buckets; the pipeline services never receive these credentials.
 """
 
 import os
@@ -25,8 +25,8 @@ def s3_client():
         aws_access_key_id=os.environ["S3_ADMIN_ACCESS_KEY"],
         aws_secret_access_key=os.environ["S3_ADMIN_SECRET_KEY"],
         region_name="us-east-1",
-        # Der Healthcheck meldet SeaweedFS bereit, bevor der Filer jede Anfrage annimmt;
-        # Wiederholungen mit Backoff überbrücken diese Anlaufzeit.
+        # The healthcheck reports SeaweedFS ready before the filer accepts every request;
+        # retries with backoff bridge this startup time.
         config=Config(
             s3={"addressing_style": "path"}, retries={"mode": "standard", "max_attempts": 10}
         ),
@@ -37,7 +37,7 @@ def bucket_exists(s3, bucket: str) -> bool:
     try:
         s3.head_bucket(Bucket=bucket)
     except ClientError as err:
-        # Nur "nicht gefunden" heißt fehlend; z. B. AccessDenied bricht den Lauf ab.
+        # Only "not found" means missing; e.g. AccessDenied aborts the run.
         if err.response["Error"]["Code"] in ("404", "NoSuchBucket", "NotFound"):
             return False
         raise
@@ -48,10 +48,10 @@ def main() -> None:
     s3 = s3_client()
     for bucket in BUCKETS:
         if bucket_exists(s3, bucket):
-            log(f"{bucket} existiert bereits")
+            log(f"{bucket} already exists")
         else:
             s3.create_bucket(Bucket=bucket)
-            log(f"{bucket} angelegt")
+            log(f"{bucket} created")
 
 
 if __name__ == "__main__":

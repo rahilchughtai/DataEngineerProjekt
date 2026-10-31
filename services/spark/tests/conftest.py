@@ -1,4 +1,4 @@
-"""Lokale SparkSession und Bronze-Zeilen im TLC-Format für die Tests der Jobs."""
+"""Local SparkSession and bronze rows in TLC format for the job tests."""
 
 from collections.abc import Callable, Iterator
 from datetime import datetime
@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from pyspark.sql import DataFrame, SparkSession
 
-# Bronze-Schema wie in den TLC-Dateien 2024 (Auszug plus zwei Spalten, die Silver verwirft).
+# Bronze schema as in the 2024 TLC files (excerpt plus two columns that silver drops).
 BRONZE_SCHEMA = (
     "VendorID int, tpep_pickup_datetime timestamp_ntz, tpep_dropoff_datetime timestamp_ntz, "
     "passenger_count bigint, trip_distance double, PULocationID int, DOLocationID int, "
@@ -37,7 +37,7 @@ def spark() -> Iterator[SparkSession]:
         SparkSession.builder.master("local[2]")
         .config("spark.sql.shuffle.partitions", "2")
         .config("spark.sql.session.timeZone", "UTC")
-        # Wie spark-defaults.conf: Partitionen year/month bleiben Strings.
+        # Like spark-defaults.conf: partitions year/month stay strings.
         .config("spark.sql.sources.partitionColumnTypeInference.enabled", "false")
         .config("spark.ui.enabled", "false")
         .getOrCreate()
@@ -49,7 +49,7 @@ def spark() -> Iterator[SparkSession]:
 
 @pytest.fixture
 def bronze(spark: SparkSession) -> Callable[..., DataFrame]:
-    """Baut Bronze-Zeilen; jedes Argument überschreibt Felder einer gültigen Fahrt."""
+    """Builds bronze rows; each argument overrides fields of a valid trip."""
 
     def build(*overrides: dict[str, Any]) -> DataFrame:
         return spark.createDataFrame([GOOD_TRIP | o for o in overrides], schema=BRONZE_SCHEMA)

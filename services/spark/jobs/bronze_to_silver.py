@@ -1,8 +1,8 @@
-"""Job 1, Bronze → Silver: Schema vereinheitlichen, Duplikate entfernen, Datenqualität prüfen.
+"""Job 1, bronze → silver: harmonize the schema, remove duplicates, check data quality.
 
-Gültige Fahrten landen in silver/yellow_tripdata, abgelehnte mit Grund (reject_reason) in der
-Quarantäne silver/_quarantine/yellow_tripdata. Jeder Monat wird einzeln gelesen, weil die TLC ihr
-Schema über die Jahre ändert (z. B. passenger_count als double oder int64).
+Valid trips go to silver/yellow_tripdata, rejected ones with a reason (reject_reason) to the
+quarantine silver/_quarantine/yellow_tripdata. Each month is read separately because the TLC
+changes its schema over the years (e.g. passenger_count as double or int64).
 """
 
 import logging
@@ -14,9 +14,9 @@ from common import BRONZE, QUARANTINE, SILVER, month_path, period_months, start,
 
 log = logging.getLogger("bronze_to_silver")
 
-# Silver-Spalte → (Spalte in Bronze, Zieltyp). Datenminimierung: nur, was für Nachfrage-Features
-# gebraucht wird; VendorID, store_and_fwd_flag, RatecodeID und Einzelgebühren entfallen.
-# Zeitstempel sind lokale NYC-Zeit ohne Zone (TLC-Konvention), daher timestamp_ntz.
+# Silver column → (column in bronze, target type). Data minimization: only what demand features
+# need; VendorID, store_and_fwd_flag, RatecodeID and individual fees are dropped.
+# Timestamps are local NYC time without a zone (TLC convention), hence timestamp_ntz.
 SILVER_COLUMNS = {
     "pickup_datetime": ("tpep_pickup_datetime", "timestamp_ntz"),
     "dropoff_datetime": ("tpep_dropoff_datetime", "timestamp_ntz"),
@@ -31,10 +31,10 @@ SILVER_COLUMNS = {
 
 
 def harmonize(raw: DataFrame) -> DataFrame:
-    """Wählt die Silver-Spalten und castet sie auf feste Typen.
+    """Selects the silver columns and casts them to fixed types.
 
-    try_cast macht aus nicht konvertierbaren Werten null (die Regeln lehnen die Zeile dann ab),
-    statt den ganzen Monat abzubrechen.
+    try_cast turns unconvertible values into null (the rules then reject the row) instead of
+    failing the whole month.
     """
     columns = [
         F.col(src).try_cast(dtype).alias(name) for name, (src, dtype) in SILVER_COLUMNS.items()
@@ -52,7 +52,7 @@ def first_instant(year: int, month: int) -> Column:
 
 
 def reject_reason(year: int, month: int) -> Column:
-    """Name der ersten verletzten Regel oder null für gültige Fahrten (Reihenfolge = Priorität)."""
+    """Name of the first violated rule, or null for valid trips (order = priority)."""
     start = first_instant(year, month)
     end = first_instant(year + 1, 1) if month == 12 else first_instant(year, month + 1)
     pickup, dropoff = F.col("pickup_datetime"), F.col("dropoff_datetime")
@@ -61,25 +61,25 @@ def reject_reason(year: int, month: int) -> Column:
     rules = {
         "pickup_null": pickup.isNull(),
         "dropoff_null": dropoff.isNull(),
-        # TLC-Dateien enthalten vereinzelt Fahrten aus anderen Monaten oder Jahren.
+        # TLC files occasionally contain trips from other months or years.
         "pickup_outside_month": (pickup < start) | (pickup >= end),
         "negative_duration": duration < 0,
         "duration_over_24h": duration > 24 * 3600,
         "distance_invalid": out_of_range("trip_distance", 0, 200),
-        # Negative Beträge sind Stornos oder Korrekturbuchungen, keine Fahrten.
+        # Negative amounts are cancellations or corrections, not trips.
         "amount_invalid": out_of_range("fare_amount", 0, 1e12)
         | out_of_range("total_amount", 0, 1e12),
-        # Die TLC-Zonen haben die IDs 1 bis 263, 264/265 stehen für „unbekannt“ / „außerhalb NYC“.
+        # TLC zones have IDs 1 to 263; 264/265 stand for "unknown" / "outside NYC".
         "location_invalid": out_of_range("pu_location_id", 1, 265)
         | out_of_range("do_location_id", 1, 265),
-        # passenger_count fehlt häufig (Eingabe am Taxameter) und darf null bleiben.
+        # passenger_count is often missing (entered at the meter) and may stay null.
         "passenger_count_invalid": (passengers < 0) | (passengers > 9),
     }
     return F.coalesce(*(F.when(rule, F.lit(name)) for name, rule in rules.items()))
 
 
 def to_silver(raw: DataFrame, year: int, month: int) -> DataFrame:
-    """Entfernt exakte Duplikate, vereinheitlicht das Schema, ergänzt reject_reason und Lineage."""
+    """Removes exact duplicates, harmonizes the schema, adds reject_reason and lineage."""
     return (
         harmonize(raw.dropDuplicates())
         .withColumn("reject_reason", reject_reason(year, month))
@@ -90,7 +90,7 @@ def to_silver(raw: DataFrame, year: int, month: int) -> DataFrame:
 def main() -> None:
     spark = start("bronze_to_silver")
     for year, month in period_months():
-        # Lineage: aus welcher Bronze-Datei jede Zeile stammt.
+        # Lineage: which bronze file each row comes from.
         raw = spark.read.parquet(month_path(BRONZE, year, month)).withColumn(
             "_source_file", F.col("_metadata.file_path")
         )
@@ -98,7 +98,7 @@ def main() -> None:
         rejected = F.col("reject_reason").isNotNull()
         write_month(silver.filter(~rejected).drop("reject_reason"), SILVER, year, month)
         write_month(silver.filter(rejected), QUARANTINE, year, month)
-        log.info("%04d-%02d: Silver und Quarantäne geschrieben", year, month)
+        log.info("%04d-%02d: silver and quarantine written", year, month)
     spark.stop()
 
 

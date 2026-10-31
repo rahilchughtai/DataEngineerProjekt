@@ -2,7 +2,7 @@
 name = "pipeline-common"
 version = "0.1.0"
 description = "Was Ingestion und Spark gemeinsam verwenden: Zeitraum, Monatspartitionen und Log-Format."
-# Läuft in beiden Images: Ingestion (Python 3.12) und Spark (Python 3.10).
+# Runs in both images: ingestion (Python 3.12) and Spark (Python 3.10).
 requires-python = ">=3.10,<3.13"
 dependencies = []
 
@@ -13,7 +13,7 @@ dev = ["pytest>=8.4"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 
-# Erbt die zentrale Konfiguration, das Sprachniveau folgt dem Spark-Image.
+# Inherits the central config; the language level follows the Spark image.
 [tool.ruff]
 extend = "../../pyproject.toml"
 target-version = "py310"

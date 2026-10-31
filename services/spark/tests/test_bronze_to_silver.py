@@ -20,7 +20,7 @@ def test_silver_keeps_only_needed_columns(bronze: Callable[..., DataFrame]) -> N
 
 
 def test_type_drift_is_cast_and_unconvertible_values_become_null(spark: SparkSession) -> None:
-    # Ältere Monate speichern passenger_count als double und Spalten in anderer Schreibweise.
+    # Older months store passenger_count as double and spell columns differently.
     raw = spark.createDataFrame(
         [
             (
@@ -76,7 +76,7 @@ def test_valid_trips_pass(bronze: Callable[..., DataFrame], override: dict[str, 
         ({"PULocationID": 0}, "location_invalid"),
         ({"DOLocationID": 266}, "location_invalid"),
         ({"passenger_count": 12}, "passenger_count_invalid"),
-        # Die erste verletzte Regel gewinnt.
+        # The first violated rule wins.
         ({"trip_distance": -1.0, "fare_amount": -5.0}, "distance_invalid"),
     ],
 )
@@ -99,7 +99,7 @@ def test_write_month_replaces_only_that_month(
     write_month(bronze({}, {"fare_amount": 18.0}), table, 2024, 1)
     write_month(bronze({}), table, 2024, 2)
 
-    # Wiederholung für Januar: ersetzt den Monat, statt Zeilen zu verdoppeln.
+    # Rerun for January: replaces the month instead of duplicating rows.
     write_month(bronze({}), table, 2024, 1)
 
     rows = spark.read.parquet(table).groupBy("year", "month").count().collect()

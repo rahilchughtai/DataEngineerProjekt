@@ -1,21 +1,21 @@
-# End-to-End-Test: dieselbe Pipeline wie docker-compose.yml, nur mit einer Mock-Quelle statt der TLC
-# und einem Test-Container am Ende der Kette:
+# End-to-end test: the same pipeline as docker-compose.yml, but with a mock source instead of the
+# TLC and a test container at the end of the chain:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example \
 #     run --build --rm e2e-tests
 #   docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example down -v
 #
-# Eigenes Projekt mit eigenen Volumes und ohne Host-Ports: berührt nie den lokalen Data Lake.
+# Separate project with its own volumes and no host ports: never touches the local data lake.
 name: taxi-pipeline-test
 
-# Das Quartal, für das tests/e2e/fixtures Dateien enthält; ein kleiner Executor reicht dafür.
+# The quarter tests/e2e/fixtures has files for; a small executor is enough for it.
 x-test-job: &test-job
   environment:
     INGEST_PERIOD: "2024Q1"
     SPARK_EXECUTOR_MEMORY: 512m
 
 services:
-  # Liefert gekürzte echte TLC-Dateien (2.000 Fahrten je Monat) und für fehlende Monate wie die TLC 403.
+  # Serves truncated real TLC files (2,000 trips per month) and, like the TLC, 403 for missing months.
   tlc-mock:
     image: docker.io/library/nginx:1.29.1-alpine
     volumes:
@@ -41,7 +41,7 @@ services:
       tlc-mock:
         condition: service_healthy
 
-  # Ein kleiner Worker genügt für die Testdaten und passt in lokale VMs mit 2 GiB RAM.
+  # One small worker is enough for the test data and fits local VMs with 2 GiB RAM.
   spark-worker:
     deploy:
       replicas: 1
@@ -52,8 +52,8 @@ services:
   gold-job: *test-job
   report: *test-job
 
-  # Prüft den Lake nach dem Lauf; startet nur, wenn alle Schritte erfolgreich waren. Braucht alle
-  # Identitäten, weil er deren Zugriffsrechte prüft.
+  # Checks the lake after the run; starts only if all steps succeeded. Needs all identities
+  # because it checks their access rights.
   e2e-tests:
     build:
       context: .
@@ -61,14 +61,14 @@ services:
     image: localhost/taxi-pipeline/e2e-tests:0.1.0
     environment:
       S3_ENDPOINT: http://seaweedfs:8333
-      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?siehe .env.example}
-      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?siehe .env.example}
-      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
-      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
-      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
-      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
-      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?siehe .env.example}
-      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?siehe .env.example}
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?}
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?}
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?}
+      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?}
+      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?}
     depends_on:
       report:
         condition: service_completed_successfully
