@@ -10,7 +10,7 @@ End-to-End-Latenz des Laufs.
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,9 @@ from pyspark.sql import SparkSession
 from pipeline_common import env
 from pipeline_common.logs import setup_logging
 from pipeline_common.periods import parse_period, period_from_env
-from pipeline_common.run_id import read_run_id
+from pipeline_common.reports import EXIT_CONFIG, EXIT_FAILED, EXIT_OK
+from pipeline_common.run_id import read_run_id, started_at
+from pipeline_common.timing import now_utc
 from spark_jobs import lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.session import build_session
@@ -35,26 +37,22 @@ def step_reports(paths: LakePaths, run_id: str) -> dict[str, str]:
     """Compose-Service → Pfad seines Reports, in der Reihenfolge der Kette."""
     return {
         "ingestion": paths.bronze_run_report(run_id),
-        "silver-job": paths.run_report(run_id),
+        "silver-job": paths.silver_run_report(run_id),
         "gold-job": paths.gold_run_report(run_id),
     }
-
-
-def run_started_at(run_id: str) -> datetime:
-    return datetime.strptime(run_id[:16], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
 
 
 def build_report(
     run_id: str, period: str, reports: dict[str, dict[str, Any]], finished_at: datetime
 ) -> dict[str, Any]:
-    started_at = run_started_at(run_id)
+    started = started_at(run_id)
     return {
         "run_id": run_id,
         "period": period,
         "months": [str(month) for month in parse_period(period)],
-        "started_at": started_at.isoformat(),
+        "started_at": started.isoformat(),
         "finished_at": finished_at.isoformat(),
-        "seconds": round((finished_at - started_at).total_seconds(), 2),
+        "seconds": round((finished_at - started).total_seconds(), 2),
         "steps": [
             {"step": step, "counts": report["counts"], "seconds": report["seconds"]}
             for step, report in reports.items()
@@ -82,8 +80,7 @@ def run(
             raise MissingReportError(f"Report von {step} fehlt: {path}")
         reports[step] = json.loads(lake.read_text(spark, path))
 
-    finished_at = datetime.now(timezone.utc).replace(microsecond=0)
-    report = build_report(run_id, period, reports, finished_at)
+    report = build_report(run_id, period, reports, now_utc())
     report_path = paths.pipeline_report(run_id)
     lake.write_text(spark, report_path, json.dumps(report, indent=2))
     write_host_copy(runs_dir, report)
@@ -104,16 +101,16 @@ def main() -> int:
         spark = build_session("pipeline_report")
     except ValueError as err:
         log.error("%s", err)
-        return 2
+        return EXIT_CONFIG
 
     try:
         run(spark, paths, run_id, period, runs_dir)
     except MissingReportError as err:
         log.error("%s", err)
-        return 1
+        return EXIT_FAILED
     finally:
         spark.stop()
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":

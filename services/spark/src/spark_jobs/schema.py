@@ -26,6 +26,9 @@ SILVER_COLUMNS: dict[str, tuple[str, DataType]] = {
 }
 BUSINESS_COLUMNS = list(SILVER_COLUMNS)
 
+# Die TLC-Zonenkarte hat die IDs 1 bis 263; 264 und 265 stehen für „unbekannt“ bzw. „außerhalb NYC“.
+LOCATION_ID_RANGE = (1, 265)
+
 
 class SchemaError(ValueError):
     """Eine Bronze-Datei enthält nicht alle benötigten Spalten."""
@@ -44,3 +47,8 @@ def harmonize(raw: DataFrame) -> DataFrame:
     source_file = F.col("_source_file") if "_source_file" in raw.columns else F.lit(None)
     columns.append(source_file.cast("string").alias("_source_file"))
     return raw.select(*columns)
+
+
+def duration_seconds() -> Column:
+    """Fahrtdauer einer Silver-Zeile in Sekunden."""
+    return F.timestamp_diff("SECOND", F.col("pickup_datetime"), F.col("dropoff_datetime"))

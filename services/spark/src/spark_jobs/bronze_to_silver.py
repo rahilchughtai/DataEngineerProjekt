@@ -7,28 +7,26 @@ year und month sind Strings; spark-defaults.conf schaltet die Typableitung beim 
 Pro Lauf entsteht ein JSON-Report mit Zählern je Regel und Laufzeiten.
 """
 
-import json
 import logging
 import math
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from pipeline_common.logs import setup_logging
-from pipeline_common.periods import Month, months_from_env
-from pipeline_common.reports import exit_code, run_report
-from pipeline_common.run_id import read_run_id
-from spark_jobs import lake
+from pipeline_common.periods import Month
+from pipeline_common.timing import elapsed, now_utc
+from spark_jobs import job, lake
 from spark_jobs.lake import LakePaths
 from spark_jobs.quality import RULE_NAMES, classify
 from spark_jobs.schema import harmonize
 from spark_jobs.session import build_session
 
-log = logging.getLogger("bronze_to_silver")
+JOB = "bronze_to_silver"
+log = logging.getLogger(JOB)
 
 # Knapp 20 MB je Parquet-Datei. Ohne Vorgabe schreibt Spark nach dem Shuffle von dropDuplicates
 # 200 kleine Dateien je Monat (spark.sql.shuffle.partitions).
@@ -43,13 +41,8 @@ def deduplicate(raw: DataFrame) -> DataFrame:
 
 def prepare(raw: DataFrame, month: Month, run_id: str, processed_at: datetime) -> DataFrame:
     """Dedupliziert, harmonisiert, klassifiziert und ergänzt Lineage- und Partitionsspalten."""
-    return (
-        classify(harmonize(deduplicate(raw)), month)
-        .withColumn("_run_id", F.lit(run_id))
-        .withColumn("_processed_at", F.lit(processed_at))
-        # Als zweistelliger String, damit die Pfade wie in Bronze year=YYYY/month=MM heißen.
-        .withColumn("year", F.lit(f"{month.year:04d}"))
-        .withColumn("month", F.lit(f"{month.month:02d}"))
+    return lake.with_lineage(
+        classify(harmonize(deduplicate(raw)), month), month, run_id, processed_at
     )
 
 
@@ -68,13 +61,13 @@ def files_for(rows: int) -> int:
 def process_month(
     spark: SparkSession, month: Month, paths: LakePaths, run_id: str
 ) -> dict[str, Any]:
-    source = paths.bronze_month(month)
-    entry: dict[str, Any] = {"month": str(month), "source": source}
-    try:
-        return _process_month(spark, month, paths, run_id, entry)
-    except Exception as err:
-        log.exception("month=%s status=failed", month)
-        return entry | {"status": "failed", "error": str(err)}
+    return job.process_month(
+        spark,
+        month,
+        paths.bronze_month(month),
+        log,
+        lambda entry: _process_month(spark, month, paths, run_id, entry),
+    )
 
 
 def write_month(
@@ -86,35 +79,24 @@ def write_month(
     rows_rejected: int,
 ) -> None:
     """Schreibt Silver und Quarantäne des Monats; bei einem Fehler fehlt der Monat in beiden."""
-    try:
+    silver, quarantine = paths.silver_table(), paths.quarantine_table()
+    with lake.removed_on_failure(spark, month, (silver, quarantine)):
         valid = valid_rows(classified).coalesce(files_for(rows_valid))
         rejected = rejected_rows(classified).coalesce(files_for(rows_rejected))
-        lake.write_partition(spark, valid, paths.silver_table(), month, rows_valid > 0)
-        lake.write_partition(spark, rejected, paths.quarantine_table(), month, rows_rejected > 0)
-    except Exception:
-        for table in (paths.silver_table(), paths.quarantine_table()):
-            target = f"{table}/{lake.partition(month)}"
-            try:
-                lake.delete(spark, target)
-            except Exception:
-                log.exception("month=%s Aufräumen fehlgeschlagen: %s", month, target)
-        raise
+        lake.write_partition(spark, valid, silver, month, rows_valid > 0)
+        lake.write_partition(spark, rejected, quarantine, month, rows_rejected > 0)
 
 
 def _process_month(
     spark: SparkSession, month: Month, paths: LakePaths, run_id: str, entry: dict[str, Any]
 ) -> dict[str, Any]:
-    source = entry["source"]
     started = time.monotonic()
-    if not lake.exists(spark, source):
-        log.warning("month=%s status=missing source=%s", month, source)
-        return entry | {"status": "missing"}
-
-    processed_at = datetime.now(timezone.utc).replace(microsecond=0)
-    raw = spark.read.parquet(source).withColumn("_source_file", F.col("_metadata.file_path"))
+    processed_at = now_utc()
+    raw = spark.read.parquet(entry["source"]).withColumn(
+        "_source_file", F.col("_metadata.file_path")
+    )
     rows_in = raw.count()
-    classified = prepare(raw, month, run_id, processed_at).cache()
-    try:
+    with job.cached(prepare(raw, month, run_id, processed_at)) as classified:
         by_reason = {
             row["reject_reason"]: row["count"]
             for row in classified.groupBy("reject_reason").count().collect()
@@ -124,8 +106,6 @@ def _process_month(
         rows_valid = by_reason.get(None, 0)
         if rows_valid > 0:
             write_month(spark, classified, paths, month, rows_valid, rows_rejected)
-    finally:
-        classified.unpersist()
 
     counts = {
         "rows_in": rows_in,
@@ -134,7 +114,7 @@ def _process_month(
         "duplicates": rows_in - sum(by_reason.values()),
         "rejected_by_rule": rejected_by_rule,
     }
-    seconds = round(time.monotonic() - started, 2)
+    seconds = elapsed(started)
     if rows_valid == 0:
         # Eine leere oder komplett abgelehnte Datei ist kein gültiger Monat. Silver und
         # Quarantäne behalten ihren bisherigen Stand, Gold findet so keine leere Partition.
@@ -145,51 +125,36 @@ def _process_month(
             rows_rejected,
         )
         error = "Keine gültigen Zeilen; Silver und Quarantäne bleiben unverändert"
-        return entry | {"status": "failed", "error": error} | counts | {"seconds": seconds}
-
-    log.info(
-        "month=%s status=processed rows_in=%d valid=%d rejected=%d duplicates=%d seconds=%.1f",
-        month,
-        rows_in,
-        rows_valid,
-        rows_rejected,
-        counts["duplicates"],
-        seconds,
-    )
-    return entry | {"status": "processed"} | counts | {"seconds": seconds}
+        status: dict[str, Any] = {"status": "failed", "error": error}
+    else:
+        log.info(
+            "month=%s status=processed rows_in=%d valid=%d rejected=%d duplicates=%d seconds=%.1f",
+            month,
+            rows_in,
+            rows_valid,
+            rows_rejected,
+            counts["duplicates"],
+            seconds,
+        )
+        status = {"status": "processed"}
+    return entry | status | counts | {"seconds": seconds}
 
 
 def run(spark: SparkSession, months: list[Month], paths: LakePaths, run_id: str) -> dict[str, Any]:
-    results: list[dict[str, Any]] = []
-    started = time.monotonic()
-    for month in months:
-        results.append(process_month(spark, month, paths, run_id))
-
-    report = run_report(run_id, paths.dataset, started, results, job="bronze_to_silver")
-    counts = report["counts"]
-    report_path = paths.run_report(run_id)
-    lake.write_text(spark, report_path, json.dumps(report, indent=2))
-    log.info("run=%s finished counts=%s report=%s", run_id, counts, report_path)
-    return report
+    return job.run_months(
+        spark,
+        months,
+        lambda month: process_month(spark, month, paths, run_id),
+        run_id=run_id,
+        dataset=paths.dataset,
+        job=JOB,
+        report_path=paths.silver_run_report(run_id),
+        log=log,
+    )
 
 
 def main() -> int:
-    setup_logging(quiet=("py4j",))
-    try:
-        months = months_from_env()
-        paths = LakePaths.from_env()
-        run_id = read_run_id()
-        spark = build_session("bronze_to_silver")
-    except ValueError as err:
-        log.error("%s", err)
-        return 2
-
-    log.info("run=%s months=%s", run_id, ",".join(map(str, months)))
-    try:
-        report = run(spark, months, paths, run_id)
-    finally:
-        spark.stop()
-    return exit_code(report["counts"], "missing")
+    return job.main(JOB, run, build_session)
 
 
 if __name__ == "__main__":

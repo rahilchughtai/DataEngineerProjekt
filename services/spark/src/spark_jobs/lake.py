@@ -4,13 +4,21 @@
 file:// (Tests), ohne einen zweiten S3-Client im Image.
 """
 
+import logging
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 
 from pipeline_common.env import required
 from pipeline_common.periods import Month
+from pipeline_common.reports import runs_key
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -30,35 +38,31 @@ class LakePaths:
         )
 
     def bronze_month(self, month: Month) -> str:
-        return f"{self.bronze}/{self.dataset}/{partition(month)}"
+        return f"{self.bronze}/{self.dataset}/{month.partition}"
 
     def bronze_run_report(self, run_id: str) -> str:
-        return f"{self.bronze}/_runs/{self.dataset}/{run_id}.json"
+        return f"{self.bronze}/{runs_key(self.dataset, run_id)}"
 
     def silver_table(self) -> str:
         return f"{self.silver}/{self.dataset}"
 
     def silver_month(self, month: Month) -> str:
-        return f"{self.silver_table()}/{partition(month)}"
+        return f"{self.silver_table()}/{month.partition}"
 
     def quarantine_table(self) -> str:
         return f"{self.silver}/_quarantine/{self.dataset}"
 
-    def run_report(self, run_id: str) -> str:
-        return f"{self.silver}/_runs/{self.dataset}/{run_id}.json"
+    def silver_run_report(self, run_id: str) -> str:
+        return f"{self.silver}/{runs_key(self.dataset, run_id)}"
 
     def gold_table(self) -> str:
         return f"{self.gold}/{self.dataset}/zone_hourly"
 
     def gold_run_report(self, run_id: str) -> str:
-        return f"{self.gold}/_runs/{self.dataset}/{run_id}.json"
+        return f"{self.gold}/{runs_key(self.dataset, run_id)}"
 
     def pipeline_report(self, run_id: str) -> str:
-        return f"{self.gold}/_runs/pipeline/{run_id}.json"
-
-
-def partition(month: Month) -> str:
-    return f"year={month.year:04d}/month={month.month:02d}"
+        return f"{self.gold}/{runs_key('pipeline', run_id)}"
 
 
 def _fs(spark: SparkSession, path: str) -> tuple[Any, Any]:
@@ -102,7 +106,7 @@ def write_partition(
     """Überschreibt genau die Partition des Monats, alle anderen bleiben unverändert."""
     if not has_rows:
         # Ein leerer DataFrame schreibt keine Partition und würde einen alten Stand stehen lassen.
-        delete(spark, f"{table}/{partition(month)}")
+        delete(spark, f"{table}/{month.partition}")
         return
     (
         df.write.mode("overwrite")
@@ -110,4 +114,30 @@ def write_partition(
         .option("partitionOverwriteMode", "dynamic")
         .partitionBy("year", "month")
         .parquet(table)
+    )
+
+
+@contextmanager
+def removed_on_failure(spark: SparkSession, month: Month, tables: Iterable[str]) -> Iterator[None]:
+    """Scheitert das Schreiben, fehlt der Monat in allen Tabellen ganz statt halb ersetzt."""
+    try:
+        yield
+    except Exception:
+        for table in tables:
+            target = f"{table}/{month.partition}"
+            try:
+                delete(spark, target)
+            except Exception:
+                log.exception("month=%s Aufräumen fehlgeschlagen: %s", month, target)
+        raise
+
+
+def with_lineage(df: DataFrame, month: Month, run_id: str, processed_at: datetime) -> DataFrame:
+    """Ergänzt Lineage- und Partitionsspalten eines Monats."""
+    return (
+        df.withColumn("_run_id", F.lit(run_id))
+        .withColumn("_processed_at", F.lit(processed_at))
+        # Als zweistelliger String, damit die Pfade wie in Bronze year=YYYY/month=MM heißen.
+        .withColumn("year", F.lit(f"{month.year:04d}"))
+        .withColumn("month", F.lit(f"{month.month:02d}"))
     )

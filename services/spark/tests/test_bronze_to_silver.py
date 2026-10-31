@@ -150,7 +150,7 @@ def test_run_writes_report(
     report = run(spark, [JANUARY, FEBRUARY], paths, RUN_ID)
 
     assert report["counts"] == {"processed": 1, "missing": 1}
-    stored = json.loads(Path(paths.run_report(RUN_ID).removeprefix("file://")).read_text())
+    stored = json.loads(Path(paths.silver_run_report(RUN_ID).removeprefix("file://")).read_text())
     assert stored == report
 
 
