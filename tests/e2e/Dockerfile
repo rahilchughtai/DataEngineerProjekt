@@ -6,7 +6,7 @@ COPY tests/e2e/pyproject.toml tests/e2e/uv.lock ./
 RUN uv sync --frozen --no-dev --no-cache
 COPY tests/e2e/*.py ./
 COPY tests/e2e/fixtures ./fixtures
-COPY seaweedfs/s3.json.template ./
+COPY seaweedfs/s3.template.json ./
 
 RUN useradd --system --uid 10001 e2e
 USER e2e

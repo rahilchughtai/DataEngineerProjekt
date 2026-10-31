@@ -2,7 +2,7 @@
 !libs/
 !services/
 !tests/e2e/
-!seaweedfs/s3.json.template
+!seaweedfs/s3.template.json
 libs/*/tests/
 services/*/tests/
 **/.venv/

@@ -1,0 +1,15 @@
+# Image für lake-init: legt die Buckets über die S3-API an und beendet sich. Getrennt vom
+# SeaweedFS-Image, damit der Server kein Python und kein boto3 mitführen muss.
+FROM docker.io/library/python:3.12.16-slim-bookworm
+COPY --from=ghcr.io/astral-sh/uv:0.12.10 /uv /usr/local/bin/uv
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-cache
+COPY init-buckets.py ./
+
+# Ohne Root-Rechte laufen (Least Privilege).
+RUN useradd --system --uid 10001 init
+USER init
+ENV PATH=/app/.venv/bin:$PATH PYTHONUNBUFFERED=1
+ENTRYPOINT ["python", "init-buckets.py"]
