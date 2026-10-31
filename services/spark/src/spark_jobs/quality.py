@@ -34,17 +34,6 @@ def _invalid_amount(name: str) -> Column:
     return column.isNull() | F.isnan(name) | (column < 0) | (column == F.lit(float("inf")))
 
 
-def _amount_invalid(_: Month) -> Column:
-    return _invalid_amount("fare_amount") | _invalid_amount("total_amount")
-
-
-def _location_invalid(_: Month) -> Column:
-    low_id, high_id = LOCATION_ID_RANGE
-    return _out_of_range("pu_location_id", low_id, high_id) | _out_of_range(
-        "do_location_id", low_id, high_id
-    )
-
-
 # Regelname → Bedingung für den Monat. Spalten entstehen erst beim Aufruf, nicht beim Import.
 RULES: dict[str, Callable[[Month], Column]] = {
     "pickup_null": lambda _: F.col("pickup_datetime").isNull(),
@@ -57,14 +46,16 @@ RULES: dict[str, Callable[[Month], Column]] = {
         _out_of_range("trip_distance", 0, MAX_TRIP_DISTANCE_MILES) | F.isnan("trip_distance")
     ),
     # Negative Beträge sind Stornos oder Korrekturbuchungen, keine Fahrten.
-    "amount_invalid": _amount_invalid,
-    "location_invalid": _location_invalid,
+    "amount_invalid": lambda _: _invalid_amount("fare_amount") | _invalid_amount("total_amount"),
+    "location_invalid": lambda _: (
+        _out_of_range("pu_location_id", *LOCATION_ID_RANGE)
+        | _out_of_range("do_location_id", *LOCATION_ID_RANGE)
+    ),
     # passenger_count fehlt in der Quelle häufig (Eingabe am Taxameter) und bleibt dann null.
     "passenger_count_invalid": lambda _: (
         (F.col("passenger_count") < 0) | (F.col("passenger_count") > MAX_PASSENGERS)
     ),
 }
-RULE_NAMES = tuple(RULES)
 
 
 def classify(df: DataFrame, month: Month) -> DataFrame:

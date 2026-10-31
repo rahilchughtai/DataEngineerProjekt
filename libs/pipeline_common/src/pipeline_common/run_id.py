@@ -8,13 +8,12 @@ from pipeline_common.env import required
 
 RUN_ID_FILE_ENV = "PIPELINE_RUN_ID_FILE"
 RUN_ID_PATTERN = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{6}")
-_STARTED_AT_FORMAT = "%Y%m%dT%H%M%SZ"
 
 
 def started_at(run_id: str) -> datetime:
     """Startzeit des Laufs (UTC), die vorne in der Run-ID steht."""
     timestamp = run_id.split("-", 1)[0]
-    return datetime.strptime(timestamp, _STARTED_AT_FORMAT).replace(tzinfo=timezone.utc)
+    return datetime.strptime(timestamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
 
 
 def read_run_id() -> str:

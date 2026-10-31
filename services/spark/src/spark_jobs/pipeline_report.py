@@ -29,30 +29,18 @@ log = logging.getLogger("pipeline_report")
 
 
 class StepReportError(RuntimeError):
-    """Der Report eines Schritts lässt sich nicht verwenden."""
-
-
-class MissingReportError(StepReportError):
-    """Ein Schritt des Laufs hat keinen Report geschrieben."""
-
-
-class InvalidReportError(StepReportError):
-    """Der Report eines Schritts ist kein JSON oder hat nicht die erwarteten Felder."""
+    """Ein Schritt des Laufs hat keinen verwendbaren Report geschrieben."""
 
 
 def read_step_report(spark: SparkSession, step: str, path: str) -> dict[str, Any]:
+    """counts und seconds aus dem Report eines Schritts."""
     if not lake.exists(spark, path):
-        raise MissingReportError(f"Report von {step} fehlt: {path}")
+        raise StepReportError(f"Report von {step} fehlt: {path}")
     try:
         report = json.loads(lake.read_text(spark, path))
-    except json.JSONDecodeError as err:
-        raise InvalidReportError(f"Report von {step} ist kein gültiges JSON: {path}") from err
-    if not isinstance(report, dict):
-        raise InvalidReportError(f"Report von {step} ist kein JSON-Objekt: {path}")
-    missing = [key for key in ("counts", "seconds") if key not in report]
-    if missing:
-        raise InvalidReportError(f"Report von {step} ohne {', '.join(missing)}: {path}")
-    return report
+        return {"counts": report["counts"], "seconds": report["seconds"]}
+    except (ValueError, KeyError, TypeError) as err:
+        raise StepReportError(f"Report von {step} unbrauchbar ({err!r}): {path}") from err
 
 
 def step_reports(paths: LakePaths, run_id: str) -> dict[str, str]:
@@ -75,10 +63,7 @@ def build_report(
         "started_at": started.isoformat(),
         "finished_at": finished_at.isoformat(),
         "seconds": round((finished_at - started).total_seconds(), 2),
-        "steps": [
-            {"step": step, "counts": report["counts"], "seconds": report["seconds"]}
-            for step, report in reports.items()
-        ],
+        "steps": [{"step": step} | report for step, report in reports.items()],
     }
 
 

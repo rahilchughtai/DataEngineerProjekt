@@ -1,7 +1,6 @@
 """Aufbau der Run-Reports und Exit-Codes, die alle Schritte der Kette gleich verwenden."""
 
 from collections import Counter
-from collections.abc import Iterable
 from typing import Any
 
 from pipeline_common.timing import elapsed
@@ -25,10 +24,6 @@ def failed_entry(entry: dict[str, Any], err: BaseException) -> dict[str, Any]:
     return entry | {"status": FAILED, "error": error}
 
 
-def count_statuses(results: Iterable[dict[str, Any]]) -> dict[str, int]:
-    return dict(Counter(r["status"] for r in results))
-
-
 def run_report(
     run_id: str,
     dataset: str,
@@ -43,7 +38,7 @@ def run_report(
     return report | {
         "dataset": dataset,
         "seconds": elapsed(started),
-        "counts": count_statuses(results),
+        "counts": dict(Counter(r["status"] for r in results)),
         "months": results,
     }
 

@@ -122,4 +122,3 @@ def test_fetch_source_info_parses_headers(cfg: Config) -> None:
 
     assert info.etag == "abc123"
     assert info.last_modified == "Wed, 20 Mar 2024 10:00:00 GMT"
-    assert info.content_length == 4096

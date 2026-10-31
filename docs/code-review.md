@@ -13,7 +13,7 @@ Status: **behoben** in diesem Branch, oder **offen** mit Begründung.
 |---|---|---|---|
 | B1 | Ein unbekanntes `LOG_LEVEL` (z. B. `VERBOSE`) bricht mit `ValueError` ab, bevor die Behandlung für Konfigurationsfehler greift. Exit-Code 1 mit Traceback statt einer Meldung. | `pipeline_common/logs.py` | **behoben**: Rückfall auf `INFO` mit Warnung |
 | B2 | Dateien unter 4 Byte (z. B. eine leere 200-Antwort) scheitern in `validate_parquet` mit `OSError` (`seek(-4, 2)`) statt mit `InvalidFileError` | `ingestion/download.py` | **behoben** und getestet |
-| B3 | Größenprüfung und sha256 beziehen sich auf entpackte Bytes, `Content-Length` auf die übertragenen. requests fordert standardmäßig `gzip, deflate` an. Komprimiert die Quelle oder ein Proxy, scheitert jeder Versuch. | `ingestion/download.py`, `job.py` | **behoben**: `Accept-Encoding: identity` |
+| B3 | Größenprüfung und sha256 beziehen sich auf entpackte Bytes, `Content-Length` auf die übertragenen. requests fordert standardmäßig `gzip, deflate` an. Komprimiert die Quelle oder ein Proxy, scheitert jeder Versuch. | `ingestion/download.py`, `job.py` | **behoben**: `Accept-Encoding: identity`; die eigene Größenprüfung entfällt, urllib3 2 prüft `Content-Length` selbst |
 | B4 | `init-buckets.sh` prüft mit `grep -qw`; `-` gilt als Wortgrenze, ein vorhandenes `gold-archive` lässt `gold` als vorhanden gelten. Fehler beim Anlegen bleiben unbemerkt. | `seaweedfs/init-buckets.sh` | **behoben**: exakter Namensvergleich (Format aus dem SeaweedFS-Quellcode geprüft), Nachprüfung nach dem Anlegen |
 
 ## 2. Wiederholungen
@@ -40,8 +40,8 @@ Status: **behoben** in diesem Branch, oder **offen** mit Begründung.
 | A1 | `guarded_month` reicht Parameter über ein untypisiertes `*args` durch, und die Jobs lesen ihre Quelle aus dem Report-Eintrag (`entry["source"]`) | **behoben**: `process: Callable[[str], Entry]` per `functools.partial`; `_process_month` bekommt `source` als Parameter und liefert nur seine Felder |
 | A2 | Spaltennamen für Lineage und Partitionen als Literale in `lake` und `GOLD_COLUMNS` | **behoben**: `lake.PARTITION_COLUMNS`/`LINEAGE_COLUMNS` |
 | A3 | Job 2 importiert das Qualitätsmodul nur wegen `month_bounds` | **behoben**: `month_bounds` liegt in `schema.py`, `quality` importiert es von dort |
-| A4 | `pipeline_report` behandelt nur fehlende Reports; ein kaputter Report endet mit `JSONDecodeError`/`KeyError` ohne Schrittnamen | **behoben**: `InvalidReportError` (gemeinsame Basis `StepReportError`), Exit 1 mit Meldung |
-| A5 | Scheitert das Schreiben des Run-Reports, gehen die Ergebnisse je Monat verloren | **behoben** (Spark): Report wird vor dem Abbruch geloggt |
+| A4 | `pipeline_report` behandelt nur fehlende Reports; ein kaputter Report endet mit `JSONDecodeError`/`KeyError` ohne Schrittnamen | **behoben**: eine Fehlerklasse `StepReportError` für fehlende und unbrauchbare Reports, Exit 1 mit Meldung |
+| A5 | Scheitert das Schreiben des Run-Reports, gehen die Ergebnisse je Monat verloren | offen: jeder Monat loggt sein Ergebnis bereits einzeln; ein zusätzlicher Dump wäre doppelt |
 | A6 | Ingestion: `download` und `storage` hängen am ganzen `Config`, `storage` importiert Datentypen aus `download` | offen: lohnt erst bei weiterem Ausbau; `Protocol`/`models.py` wären der nächste Schritt |
 | A7 | `lake.write_partition(..., has_rows)` überlässt die Leer-Erkennung dem Aufrufer | offen: beide Aufrufer leiten das Flag aus gezählten Zeilen ab; ein `isEmpty()` kostete eine zusätzliche Spark-Aktion |
 
@@ -59,9 +59,24 @@ Status: **behoben** in diesem Branch, oder **offen** mit Begründung.
 | P8 | Healthcheck des Workers prüft nicht die Registrierung am Master; `SPARK_EXECUTOR_MEMORY` > `SPARK_WORKER_MEMORY` lässt den Job ohne Fehler warten | offen: braucht einen lauffähigen Cluster zum Testen |
 | P9 | `requests.ConnectionError` umfasst auch `SSLError`/`ProxyError`, dauerhafte Fehler werden wiederholt | offen: nur zusätzliche Wartezeit, kein falsches Ergebnis |
 
+## Zweiter Durchgang: weniger Code
+
+Vorrang hatte, Code zu entfernen statt neue Abstraktionen einzuführen (netto rund −150 Zeilen):
+
+- `parse_month`, `quarter_months` und `count_statuses` wurden nur von Tests genutzt und gehen in
+  `parse_period` bzw. `run_report` auf.
+- `SourceInfo.content_length` wurde nie gelesen; die eigene `Content-Length`-Prüfung beim Download
+  doppelte die von urllib3.
+- `BUSINESS_COLUMNS`, `RULE_NAMES`, `valid_rows`/`rejected_rows` und die Regel-Wrapper
+  `_amount_invalid`/`_location_invalid` waren Einzeiler mit nur einem Aufrufer.
+- `pipeline_report` hat eine statt drei Fehlerklassen; die Prüfung eines Step-Reports ist ein
+  einziger `try`-Block.
+- Tests, die nur wiederholten, was andere Tests schon abdecken (`test_lake.py`,
+  `test_object_key_is_deterministic`), sind entfernt.
+
 ## Prüfung
 
-- Unit-Tests: `libs/pipeline_common` 61, `services/ingestion` 38, `services/spark` 88, alle grün.
+- Unit-Tests: `libs/pipeline_common` 53, `services/ingestion` 37, `services/spark` 84, alle grün.
 - `pre-commit run --all-files` (Ruff, YAML, Whitespace) grün; `sh -n` für die geänderten Skripte.
 - E2E (`docker-compose.test.yml`) ist in dieser Umgebung nicht gelaufen, weil der Proxy die
   Basis-Images (ghcr.io, Docker Hub) blockiert. Er läuft in CI beim PR nach `main`.

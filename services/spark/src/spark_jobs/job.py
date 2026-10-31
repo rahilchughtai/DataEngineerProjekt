@@ -91,12 +91,7 @@ def write_report(
 ) -> Entry:
     """Legt den Run-Report im Lake ab; started ist ein time.monotonic()-Wert vom Beginn."""
     report = run_report(run_id, dataset, started, results, job=job)
-    try:
-        lake.write_text(spark, report_path, json.dumps(report, indent=2))
-    except Exception:
-        # Ohne Report gingen die Ergebnisse je Monat verloren; so stehen sie wenigstens im Log.
-        log.error("run=%s Report nicht geschrieben: %s", run_id, json.dumps(report))
-        raise
+    lake.write_text(spark, report_path, json.dumps(report, indent=2))
     log.info("run=%s finished counts=%s report=%s", run_id, report["counts"], report_path)
     return report
 

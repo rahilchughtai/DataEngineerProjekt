@@ -26,7 +26,6 @@ SILVER_COLUMNS: dict[str, tuple[str, DataType]] = {
     "total_amount": ("total_amount", DoubleType()),
     "payment_type": ("payment_type", IntegerType()),
 }
-BUSINESS_COLUMNS = list(SILVER_COLUMNS)
 
 # Die TLC-Zonenkarte hat die IDs 1 bis 263; 264 und 265 stehen für „unbekannt“ bzw. „außerhalb NYC“.
 LOCATION_ID_RANGE = (1, 265)

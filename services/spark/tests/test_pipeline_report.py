@@ -9,8 +9,7 @@ from support import local
 from spark_jobs import pipeline_report
 from spark_jobs.lake import LakePaths
 from spark_jobs.pipeline_report import (
-    InvalidReportError,
-    MissingReportError,
+    StepReportError,
     build_report,
     run,
     step_reports,
@@ -81,14 +80,14 @@ def test_unwritable_host_copy_does_not_fail(tmp_path: Path) -> None:
 def test_missing_step_report_fails(spark: SparkSession, paths: LakePaths) -> None:
     put_reports(paths, skip="gold-job")
 
-    with pytest.raises(MissingReportError, match="gold-job"):
+    with pytest.raises(StepReportError, match="gold-job fehlt"):
         run(spark, paths, RUN_ID, "2024Q1")
     assert not local(paths.pipeline_report(RUN_ID)).exists()
 
 
 @pytest.mark.parametrize(
     ("content", "match"),
-    [("{kaputt", "kein gültiges JSON"), ("[]", "kein JSON-Objekt"), ('{"counts": {}}', "seconds")],
+    [("{kaputt", "JSONDecodeError"), ("[]", "TypeError"), ('{"counts": {}}', "'seconds'")],
 )
 def test_invalid_step_report_fails(
     spark: SparkSession, paths: LakePaths, content: str, match: str
@@ -96,7 +95,7 @@ def test_invalid_step_report_fails(
     put_reports(paths)
     local(paths.gold_run_report(RUN_ID)).write_text(content, encoding="utf-8")
 
-    with pytest.raises(InvalidReportError, match=match):
+    with pytest.raises(StepReportError, match=match):
         run(spark, paths, RUN_ID, "2024Q1")
     assert not local(paths.pipeline_report(RUN_ID)).exists()
 

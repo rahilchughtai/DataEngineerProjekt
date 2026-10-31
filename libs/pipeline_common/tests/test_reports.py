@@ -4,24 +4,18 @@ import pytest
 
 from pipeline_common.reports import (
     MAX_ERROR_LENGTH,
-    count_statuses,
     exit_code,
     failed_entry,
     run_report,
 )
 
 
-def test_count_statuses() -> None:
-    results = [{"status": "loaded"}, {"status": "loaded"}, {"status": "failed"}]
-    assert count_statuses(results) == {"loaded": 2, "failed": 1}
-
-
 def test_run_report_with_and_without_job() -> None:
-    results = [{"month": "2024-01", "status": "processed"}]
+    results = [{"status": "processed"}, {"status": "processed"}, {"status": "failed"}]
     started = time.monotonic()
     report = run_report("run", "yellow_tripdata", started, results, job="bronze_to_silver")
     assert report["job"] == "bronze_to_silver"
-    assert report["counts"] == {"processed": 1}
+    assert report["counts"] == {"processed": 2, "failed": 1}
     assert report["months"] == results
     assert "job" not in run_report("run", "yellow_tripdata", started, results)
 

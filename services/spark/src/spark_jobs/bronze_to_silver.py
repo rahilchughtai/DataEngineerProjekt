@@ -23,7 +23,7 @@ from pipeline_common.reports import FAILED, PROCESSED
 from pipeline_common.timing import elapsed, now_utc
 from spark_jobs import job, lake
 from spark_jobs.lake import LakePaths
-from spark_jobs.quality import RULE_NAMES, classify
+from spark_jobs.quality import RULES, classify
 from spark_jobs.schema import harmonize
 from spark_jobs.session import build_session
 
@@ -48,14 +48,6 @@ def prepare(raw: DataFrame, month: Month, run_id: str, processed_at: datetime) -
     )
 
 
-def valid_rows(classified: DataFrame) -> DataFrame:
-    return classified.filter(F.col("reject_reason").isNull()).drop("reject_reason")
-
-
-def rejected_rows(classified: DataFrame) -> DataFrame:
-    return classified.filter(F.col("reject_reason").isNotNull())
-
-
 def files_for(rows: int) -> int:
     return max(1, math.ceil(rows / ROWS_PER_FILE))
 
@@ -78,8 +70,11 @@ def write_month(
     """Schreibt Silver und Quarantäne des Monats; bei einem Fehler fehlt der Monat in beiden."""
     silver, quarantine = paths.silver_table(), paths.quarantine_table()
     with lake.removed_on_failure(spark, month, (silver, quarantine)):
-        valid = valid_rows(classified).coalesce(files_for(rows_valid))
-        rejected = rejected_rows(classified).coalesce(files_for(rows_rejected))
+        is_rejected = F.col("reject_reason").isNotNull()
+        valid = (
+            classified.filter(~is_rejected).drop("reject_reason").coalesce(files_for(rows_valid))
+        )
+        rejected = classified.filter(is_rejected).coalesce(files_for(rows_rejected))
         lake.write_partition(spark, valid, silver, month, rows_valid > 0)
         lake.write_partition(spark, rejected, quarantine, month, rows_rejected > 0)
 
@@ -97,7 +92,7 @@ def _process_month(
             row["reject_reason"]: row["count"]
             for row in classified.groupBy("reject_reason").count().collect()
         }
-        rejected_by_rule = {name: by_reason.get(name, 0) for name in RULE_NAMES}
+        rejected_by_rule = {name: by_reason.get(name, 0) for name in RULES}
         rows_rejected = sum(rejected_by_rule.values())
         rows_valid = by_reason.get(None, 0)
         if rows_valid > 0:

@@ -13,7 +13,6 @@ SOURCE = SourceInfo(
     url="https://example.test/yellow_tripdata_2024-01.parquet",
     etag="abc123",
     last_modified="Wed, 20 Mar 2024 10:00:00 GMT",
-    content_length=40,
 )
 
 
@@ -43,11 +42,6 @@ def test_object_key_is_partitioned_by_time() -> None:
     assert key == "yellow_tripdata/year=2024/month=03/yellow_tripdata_2024-03.parquet"
 
 
-def test_object_key_is_deterministic() -> None:
-    # Idempotenz: derselbe Monat landet immer auf demselben Key.
-    assert storage.object_key("d", Month(2024, 3)) == storage.object_key("d", Month(2024, 3))
-
-
 @pytest.mark.parametrize(
     ("metadata", "etag", "expected"),
     [
@@ -59,7 +53,7 @@ def test_object_key_is_deterministic() -> None:
     ],
 )
 def test_is_current(metadata: dict[str, str] | None, etag: str, expected: bool) -> None:
-    source = SourceInfo(url="u", etag=etag, last_modified="", content_length=None)
+    source = SourceInfo(url="u", etag=etag, last_modified="")
     assert storage.is_current(metadata, source) is expected
 
 

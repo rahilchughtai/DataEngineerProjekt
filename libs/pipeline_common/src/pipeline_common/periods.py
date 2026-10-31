@@ -37,37 +37,13 @@ class Month:
         return Month(self.year, self.month + 1)
 
 
-def _month(match: re.Match[str]) -> Month:
-    return Month(int(match[1]), int(match[2]))
-
-
-def _quarter(match: re.Match[str]) -> list[Month]:
-    year, quarter = int(match[1]), int(match[2])
-    first = 3 * (quarter - 1) + 1
-    return [Month(year, m) for m in range(first, first + 3)]
-
-
-def parse_month(value: str) -> Month:
-    match = _MONTH_RE.match(value.strip())
-    if not match:
-        raise ValueError(f"Monat muss im Format YYYY-MM angegeben werden, nicht {value!r}")
-    return _month(match)
-
-
-def quarter_months(value: str) -> list[Month]:
-    match = _QUARTER_RE.match(value.strip())
-    if not match:
-        raise ValueError(f"Quartal muss im Format YYYYQn angegeben werden, nicht {value!r}")
-    return _quarter(match)
-
-
 def parse_period(value: str) -> list[Month]:
     """Ein Quartal (YYYYQn) oder ein einzelner Monat (YYYY-MM)."""
-    stripped = value.strip()
-    if match := _QUARTER_RE.match(stripped):
-        return _quarter(match)
-    if match := _MONTH_RE.match(stripped):
-        return [_month(match)]
+    if match := _QUARTER_RE.match(value.strip()):
+        first = 3 * (int(match[2]) - 1) + 1
+        return [Month(int(match[1]), m) for m in range(first, first + 3)]
+    if match := _MONTH_RE.match(value.strip()):
+        return [Month(int(match[1]), int(match[2]))]
     raise ValueError(f"Zeitraum muss YYYYQn oder YYYY-MM sein, nicht {value!r}")
 
 

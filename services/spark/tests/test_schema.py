@@ -5,12 +5,12 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from spark_jobs.schema import BUSINESS_COLUMNS, SchemaError, harmonize
+from spark_jobs.schema import SILVER_COLUMNS, SchemaError, harmonize
 
 
 def test_harmonize_keeps_only_needed_columns(bronze: Callable[..., DataFrame]) -> None:
     df = harmonize(bronze({}))
-    assert df.columns == [*BUSINESS_COLUMNS, "_source_file"]
+    assert df.columns == [*SILVER_COLUMNS, "_source_file"]
     # Datenminimierung: Hersteller-ID und Store-and-Forward-Flag gelangen nicht nach Silver.
     assert "VendorID" not in df.columns
     assert "store_and_fwd_flag" not in df.columns

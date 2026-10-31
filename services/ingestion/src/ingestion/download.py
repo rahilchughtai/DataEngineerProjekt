@@ -41,7 +41,6 @@ class SourceInfo:
     url: str
     etag: str
     last_modified: str
-    content_length: int | None
 
 
 @dataclass(frozen=True)
@@ -83,12 +82,10 @@ def _check_status(response: requests.Response, url: str) -> None:
 def _head_once(session: requests.Session, url: str, cfg: Config) -> SourceInfo:
     response = session.head(url, timeout=cfg.timeout_seconds, allow_redirects=True)
     _check_status(response, url)
-    length = response.headers.get("Content-Length")
     return SourceInfo(
         url=url,
         etag=response.headers.get("ETag", "").strip('"'),
         last_modified=response.headers.get("Last-Modified", ""),
-        content_length=int(length) if length else None,
     )
 
 
@@ -98,14 +95,11 @@ def _download_once(session: requests.Session, url: str, dest: Path, cfg: Config)
     size = 0
     with session.get(url, stream=True, timeout=cfg.timeout_seconds) as response:
         _check_status(response, url)
-        expected = response.headers.get("Content-Length")
         with dest.open("wb") as fh:
             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                 fh.write(chunk)
                 digest.update(chunk)
                 size += len(chunk)
-    if expected is not None and size != int(expected):
-        raise TransientDownloadError(f"{url}: {size} von {expected} Bytes empfangen")
     return DownloadResult(dest, size, digest.hexdigest(), elapsed(started))
 
 

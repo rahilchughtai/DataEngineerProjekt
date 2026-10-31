@@ -46,7 +46,7 @@ def test_main_rejects_invalid_run_id_as_config_error(
 def test_ingest_month_reloads_only_changed_source(
     monkeypatch: pytest.MonkeyPatch, cfg: Config, parquet_file: Path, stored_etag: str, status: str
 ) -> None:
-    source = SourceInfo(url="u", etag="abc", last_modified="", content_length=None)
+    source = SourceInfo(url="u", etag="abc", last_modified="")
     uploads: list[str] = []
     monkeypatch.setattr(job, "fetch_source_info", lambda *_: source)
     monkeypatch.setattr(job.storage, "stored_metadata", lambda *_: {"source-etag": stored_etag})
