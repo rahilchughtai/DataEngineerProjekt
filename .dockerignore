@@ -1,6 +1,10 @@
 *
 !libs/
 !services/
+!tests/e2e/
+!seaweedfs/s3.json.template
+libs/*/tests/
+services/*/tests/
 **/.venv/
 **/__pycache__/
-**/tests/
+**/.pytest_cache/

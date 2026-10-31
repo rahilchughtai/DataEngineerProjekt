@@ -1,7 +1,7 @@
 [project]
 name = "e2e"
 version = "0.1.0"
-description = "End-to-End-Test der Pipeline mit Mock-TLC-Quelle und gekürzten echten Daten."
+description = "End-to-End-Test der Pipeline als Container in docker-compose.test.yml."
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "boto3>=1.40",
@@ -14,7 +14,5 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["."]
-addopts = "-ra --strict-markers"
-# Fortschritt der Läufe live statt erst am Ende eines minutenlangen Fixtures.
-log_cli = true
-log_cli_level = "INFO"
+# Ohne Cache: im Image gehört /app nicht dem Testnutzer.
+addopts = "-ra --strict-markers -p no:cacheprovider"

@@ -3,7 +3,10 @@ from pathlib import Path
 import pytest
 
 from ingestion import job
-from ingestion.job import main
+from ingestion.config import Config
+from ingestion.download import DownloadResult, SourceInfo
+from ingestion.job import ingest_month, main
+from pipeline_common.periods import Month
 
 RUN_ID_FILE = "PIPELINE_RUN_ID_FILE"
 
@@ -32,3 +35,21 @@ def test_main_rejects_invalid_run_id_as_config_error(
 
     monkeypatch.setattr(job.storage, "make_client", no_client)
     assert main() == 2
+
+
+@pytest.mark.parametrize(("stored_etag", "status"), [("abc", "skipped"), ("old", "loaded")])
+def test_ingest_month_reloads_only_changed_source(
+    monkeypatch: pytest.MonkeyPatch, cfg: Config, parquet_file: Path, stored_etag: str, status: str
+) -> None:
+    source = SourceInfo(url="u", etag="abc", last_modified="", content_length=None)
+    uploads: list[str] = []
+    monkeypatch.setattr(job, "fetch_source_info", lambda *_: source)
+    monkeypatch.setattr(job.storage, "stored_metadata", lambda *_: {"source-etag": stored_etag})
+    monkeypatch.setattr(job, "download", lambda *_: DownloadResult(parquet_file, 40, "f00", 0.1))
+    monkeypatch.setattr(job.storage, "upload", lambda _s3, _bucket, key, *_: uploads.append(key))
+
+    entry = ingest_month(Month(2024, 1), cfg, None, None)
+
+    assert entry["status"] == status
+    # Immer derselbe Key: eine Wiederholung überschreibt das Objekt statt ein zweites anzulegen.
+    assert uploads == ([] if status == "skipped" else [entry["key"]])

@@ -70,6 +70,22 @@ def test_run_writes_pipeline_report(spark: SparkSession, paths: LakePaths) -> No
     assert json.loads(local(paths.pipeline_report(RUN_ID)).read_text()) == report
 
 
+def test_run_writes_host_copy(spark: SparkSession, paths: LakePaths, tmp_path: Path) -> None:
+    put_reports(paths)
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir()
+
+    report = run(spark, paths, RUN_ID, "2024-03", str(runs_dir))
+
+    assert json.loads((runs_dir / f"{RUN_ID}.json").read_text()) == report
+
+
+def test_unwritable_host_copy_does_not_fail(tmp_path: Path) -> None:
+    pipeline_report.write_host_copy(str(tmp_path / "missing"), {"run_id": RUN_ID})
+
+    assert not (tmp_path / "missing").exists()
+
+
 def test_missing_step_report_fails(spark: SparkSession, paths: LakePaths) -> None:
     put_reports(paths, skip="gold-job")
 

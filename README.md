@@ -77,6 +77,10 @@ Details zu Cluster, Qualitätsregeln und Reports: [services/spark/README.md](ser
 
 Den Laufbericht schreibt `run-report` nach `gold/_runs/pipeline/<run_id>.json`: Zeitraum, Monate, Start- und Endzeit, die Gesamtdauer und je Schritt die Zähler und Laufzeit aus dessen eigenem Report. Die Startzeit steckt in der Run-ID, die `run-init` vor allen anderen Schritten erzeugt. Die Gesamtdauer umfasst deshalb Containerstarts und das Warten auf den Spark-Cluster, also die End-to-End-Latenz des Laufs.
 
+Eine Kopie des Laufberichts legt `run-report` als `runs/<run_id>.json` im Repo-Verzeichnis ab (Bind-Mount, in `.gitignore`). Sie bleibt auch nach `docker compose down -v` erhalten und ist ohne Zugang zum Lake lesbar. Maßgeblich bleibt der Bericht in Gold: Kann `run-report` nicht nach `runs/` schreiben, loggt er eine Warnung und der Lauf gilt trotzdem als erfolgreich. Das Verzeichnis ist mit `runs/.gitkeep` eingecheckt, weil Podman eine fehlende Quelle eines Bind-Mounts nicht anlegt und der ganze Lauf sonst nicht startet. Unter Linux gehört `runs/` dem Nutzer des Clones, und der Container-Nutzer `spark` (uid 185) darf dort nicht schreiben; vor dem ersten Lauf hilft `chmod 777 runs`.
+
+Einen Laufbericht gibt es nur für vollständige Läufe, weil `run-report` erst nach einem erfolgreichen `gold-job` startet. Bei einem Fehler bleiben die Reports der Schritte: Ingestion, Job 1 und Job 2 fangen Fehler je Monat ab und schreiben ihren Report unter `_runs/` mit `status: failed` und der Fehlermeldung, bevor sie mit Exit-Code `1` enden. Scheitert ein Schritt schon an der Konfiguration (Exit-Code `2`), schreibt er keinen Report; dann zeigt `docker compose logs <service>` den Grund.
+
 Gemessen mit 2024Q1 (Bronze schon geladen, Images gebaut, Podman unter WSL): 110 bis 113 Sekunden vom Start von `run-init` bis zum Ende von `run-report`, inklusive Start von SeaweedFS und Spark-Cluster. Davon brauchte Job 1 8 bis 18 Sekunden je Monat und Job 2 5 bis 15 Sekunden, den Rest machen Containerstarts, das Warten auf die Healthchecks und der Start der Spark-Driver aus.
 
 ## Data Lake
@@ -111,24 +115,25 @@ uv run pre-commit install                 # Hooks für jeden Commit
 uv run ruff format . && uv run ruff check .
 uv sync --directory services/ingestion    # Umgebung eines Service, z. B. für die IDE
 uv run --directory services/ingestion pytest   # Unit-Tests eines Service
-COMPOSE_CMD="docker compose" uv run --directory tests/e2e pytest -v   # End-to-End-Test (normale Umgebung vorher stoppen)
+docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example run --build --rm e2e-tests   # End-to-End-Test
+docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example down -v                                 # danach aufräumen
 ```
 
 Die Spark-Tests brauchen Java 17; unter Windows laufen sie im Spark-Image (Befehl in [services/spark/README.md](services/spark/README.md#tests)).
 
-Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; Code, den mehrere Services brauchen (Zeiträume, Run-ID, Umgebung, Logging, Run-Reports), liegt in der Bibliothek [libs/pipeline_common](libs/pipeline_common/README.md) und wird beim Bau ins Image kopiert, deshalb ist der Build-Kontext der Services das Repo-Root; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) läuft bei jedem Pull Request:
+Formatierung und Linting laufen zentral über Ruff (Konfiguration in [pyproject.toml](pyproject.toml)), dazu `.editorconfig` und LF-Zeilenenden über `.gitattributes`. Jeder Service ist ein eigenes uv-Projekt mit eigenem `uv.lock` und eigenen Tests unter `services/<name>/tests/`; Code, den mehrere Services brauchen (Zeiträume, Run-ID, Umgebung, Logging, Run-Reports), liegt in der Bibliothek [libs/pipeline_common](libs/pipeline_common/README.md) und wird beim Bau ins Image kopiert, deshalb ist der Build-Kontext der Services das Repo-Root; pytest und Test-Hilfen stehen in der `dev`-Gruppe des Service und landen nicht im Image. Der Workflow [tests.yml](.github/workflows/tests.yml) besteht aus drei Jobs:
 
-- `unit-tests`: die Unit-Tests, ein Matrix-Job pro Service und für die Bibliothek.
-- `lint`: `ruff check` und `ruff format --check`.
-- `e2e`: der [End-to-End-Test](tests/e2e/README.md). Er startet die Pipeline mit `docker compose up` über die echten Images, SeaweedFS und den Spark-Cluster; die Ingestion lädt gekürzte echte TLC-Dateien aus dem Repository von einem Mock-Server. Geprüft werden ein Quartal durch alle Schichten, der Laufbericht, die Wiederholung, ein einzelner Monat, ein nicht veröffentlichtes Quartal und die Zugriffsrechte.
+- `unit-tests`: die Unit-Tests, ein Matrix-Job pro Service und für die Bibliothek; bei jedem Pull Request und nach dem Merge nach `main`.
+- `lint`: `ruff check` und `ruff format --check`; ebenso.
+- `e2e`: nach jedem Merge nach `develop` und `main` und beim Release-PR nach `main`, nicht bei Feature-PRs. Der [End-to-End-Test](tests/e2e/README.md). [docker-compose.test.yml](docker-compose.test.yml) startet die Pipeline über die echten Images, SeaweedFS und den Spark-Cluster; die Ingestion lädt gekürzte echte TLC-Dateien aus dem Repository von einem Mock-Server. Am Ende der Kette prüft der Container `e2e-tests` ein Quartal durch alle Schichten, den Laufbericht, die Lineage und die Zugriffsrechte, danach ein zweites Mal nach einer Wiederholung auf dem befüllten Lake.
 
-Der abschließende Job `tests-passed` ist nur grün, wenn Unit-Tests, Lint und der End-to-End-Test erfolgreich waren; er ist der Pflicht-Check für Merges nach `develop`. Weil der End-to-End-Test die Images baut, blockiert ein Ausfall von Docker Hub oder Maven Central auch den Merge.
+Der abschließende Job `tests-passed` ist nur grün, wenn alle gestarteten Jobs erfolgreich waren; er ist der Pflicht-Check für Merges nach `develop` und `main`. Nach `develop` läuft der End-to-End-Test erst nach dem Merge und blockiert ihn nicht: Ein Fehler zeigt sich als roter Lauf auf `develop`. Den Release-PR nach `main` blockiert er dagegen, ein Release ohne grünen End-to-End-Test ist also nicht möglich.
 
 ## Troubleshooting
 
 ### Podman unter Windows: veröffentlichte Ports sind vom Host nicht erreichbar
 
-Die Pipeline läuft durch, aber `http://127.0.0.1:8333` (SeaweedFS) und `http://127.0.0.1:8080` (Spark-UI) verweigern unter Windows die Verbindung; der End-to-End-Test scheitert dann mit `EndpointConnectionError`. In der Machine selbst antwortet der Port (`podman machine ssh curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8333/healthz` liefert `200`).
+Die Pipeline läuft durch, aber `http://127.0.0.1:8333` (SeaweedFS) und `http://127.0.0.1:8080` (Spark-UI) verweigern unter Windows die Verbindung. Den End-to-End-Test betrifft das nicht, er erreicht SeaweedFS im Compose-Netz. In der Machine selbst antwortet der Port (`podman machine ssh curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8333/healthz` liefert `200`).
 
 Ursache ist ein bekannter Fehler im Zusammenspiel von Podman 6 und der WSL-Weiterleitung im NAT-Modus ([microsoft/WSL#41204](https://github.com/microsoft/WSL/issues/41204)): Podman 6 reserviert veröffentlichte Ports nur per `bind()`, WSL leitet aber nur TCP-Sockets im Listen-Zustand nach Windows weiter. Neuere Images von `podman machine` bringen dafür eine Konfiguration mit ([podman-machine-os](https://github.com/podman-container-tools/podman-machine-os/blob/main/podman-image/999-podman-machine-wsl-rootful.conf)), ältere Machines nicht. `podman machine set --user-mode-networking=true` hilft nicht.
 
