@@ -10,6 +10,8 @@ from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import DataType, DoubleType, IntegerType, TimestampNTZType
 
+from pipeline_common.periods import Month
+
 # Silver-Spalte → (Spalte in Bronze, Zieltyp).
 # Spark löst Spaltennamen ohne Unterscheidung von Groß- und Kleinschreibung auf.
 # Zeitstempel sind lokale NYC-Zeit ohne Zone (TLC-Konvention) und bleiben deshalb TIMESTAMP_NTZ.
@@ -24,7 +26,9 @@ SILVER_COLUMNS: dict[str, tuple[str, DataType]] = {
     "total_amount": ("total_amount", DoubleType()),
     "payment_type": ("payment_type", IntegerType()),
 }
-BUSINESS_COLUMNS = list(SILVER_COLUMNS)
+
+# Die TLC-Zonenkarte hat die IDs 1 bis 263; 264 und 265 stehen für „unbekannt“ bzw. „außerhalb NYC“.
+LOCATION_ID_RANGE = (1, 265)
 
 
 class SchemaError(ValueError):
@@ -44,3 +48,17 @@ def harmonize(raw: DataFrame) -> DataFrame:
     source_file = F.col("_source_file") if "_source_file" in raw.columns else F.lit(None)
     columns.append(source_file.cast("string").alias("_source_file"))
     return raw.select(*columns)
+
+
+def month_bounds(month: Month) -> tuple[Column, Column]:
+    """Erster Zeitpunkt des Monats und des Folgemonats, als TIMESTAMP_NTZ wie in Silver."""
+
+    def first_instant(m: Month) -> Column:
+        return F.lit(f"{m}-01 00:00:00").cast("timestamp_ntz")
+
+    return first_instant(month), first_instant(month.next())
+
+
+def duration_seconds() -> Column:
+    """Fahrtdauer einer Silver-Zeile in Sekunden."""
+    return F.timestamp_diff("SECOND", F.col("pickup_datetime"), F.col("dropoff_datetime"))

@@ -1,7 +1,6 @@
 """Zugriff auf die Bronze-Schicht im SeaweedFS-S3."""
 
 import json
-from datetime import UTC, datetime
 from typing import Any
 
 import boto3
@@ -10,7 +9,9 @@ from botocore.exceptions import ClientError
 
 from ingestion.config import Config
 from ingestion.download import DownloadResult, SourceInfo
+from pipeline_common.layout import month_prefix, runs_key
 from pipeline_common.periods import Month
+from pipeline_common.timing import now_utc
 
 PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 
@@ -29,9 +30,14 @@ def make_client(cfg: Config) -> Any:
     )
 
 
+def file_name(dataset: str, month: Month) -> str:
+    """Name der Monatsdatei, wie die TLC sie veröffentlicht; Bronze übernimmt ihn unverändert."""
+    return f"{dataset}_{month}.parquet"
+
+
 def object_key(dataset: str, month: Month) -> str:
     """Deterministischer, nach Zeit partitionierter Key. Gleicher Monat → gleicher Key."""
-    return f"{dataset}/year={month.year:04d}/month={month.month:02d}/{dataset}_{month}.parquet"
+    return f"{month_prefix(dataset, month)}/{file_name(dataset, month)}"
 
 
 def stored_metadata(client: Any, bucket: str, key: str) -> dict[str, str] | None:
@@ -63,7 +69,7 @@ def upload(
         "source-last-modified": source.last_modified,
         "sha256": result.sha256,
         "size-bytes": str(result.size),
-        "ingested-at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "ingested-at": now_utc().isoformat(),
         "ingested-by": "ingestion-service",
     }
     client.upload_file(
@@ -76,7 +82,7 @@ def upload(
 
 def write_run_report(client: Any, bucket: str, dataset: str, report: dict[str, Any]) -> str:
     """Legt pro Lauf ein JSON-Protokoll ab (Lineage und Latenzen)."""
-    key = f"_runs/{dataset}/{report['run_id']}.json"
+    key = runs_key(dataset, report["run_id"])
     client.put_object(
         Bucket=bucket,
         Key=key,

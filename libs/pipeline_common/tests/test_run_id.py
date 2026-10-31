@@ -1,8 +1,9 @@
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from pipeline_common.run_id import read_run_id
+from pipeline_common.run_id import read_run_id, started_at
 
 RUN_ID = "20240401T000000Z-abc123"
 
@@ -45,3 +46,7 @@ def test_missing_run_id_file_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setenv("PIPELINE_RUN_ID_FILE", str(tmp_path / "fehlt"))
     with pytest.raises(ValueError, match="PIPELINE_RUN_ID_FILE"):
         read_run_id()
+
+
+def test_started_at_is_utc_timestamp_of_run_id() -> None:
+    assert started_at(RUN_ID) == datetime(2024, 4, 1, tzinfo=timezone.utc)

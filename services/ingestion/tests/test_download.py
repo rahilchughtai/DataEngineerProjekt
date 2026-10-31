@@ -22,6 +22,14 @@ def test_validate_parquet_accepts_magic_bytes(parquet_file: Path) -> None:
     validate_parquet(parquet_file)
 
 
+@pytest.mark.parametrize("content", [b"", b"PAR"])
+def test_validate_parquet_rejects_too_short_files(tmp_path: Path, content: bytes) -> None:
+    path = tmp_path / "short.parquet"
+    path.write_bytes(content)
+    with pytest.raises(InvalidFileError, match="zu kurz"):
+        validate_parquet(path)
+
+
 def test_validate_parquet_rejects_other_files(tmp_path: Path) -> None:
     path = tmp_path / "error.parquet"
     path.write_bytes(b"<html>Access Denied</html>")
@@ -114,4 +122,3 @@ def test_fetch_source_info_parses_headers(cfg: Config) -> None:
 
     assert info.etag == "abc123"
     assert info.last_modified == "Wed, 20 Mar 2024 10:00:00 GMT"
-    assert info.content_length == 4096

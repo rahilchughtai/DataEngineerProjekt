@@ -1,32 +1,17 @@
 import json
 from collections.abc import Callable
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from support import FEBRUARY, JANUARY, RERUN_ID, RUN_ID, local
 
 from pipeline_common.periods import Month
 from spark_jobs import lake
 from spark_jobs.bronze_to_silver import files_for, process_month, run
 from spark_jobs.lake import LakePaths
-
-JANUARY = Month(2024, 1)
-FEBRUARY = Month(2024, 2)
-RUN_ID = "20240401T000000Z"
-
-
-@pytest.fixture
-def paths(tmp_path: Path) -> LakePaths:
-    root = tmp_path.as_uri()
-    return LakePaths(
-        bronze=f"{root}/bronze",
-        silver=f"{root}/silver",
-        gold=f"{root}/gold",
-        dataset="yellow_tripdata",
-    )
 
 
 @pytest.fixture
@@ -73,7 +58,7 @@ def test_process_month_counts_and_writes(
     assert sorted(r["reject_reason"] for r in quarantine) == ["amount_invalid", "location_invalid"]
 
     for table in (paths.silver_table(), paths.quarantine_table()):
-        partition = Path(table.removeprefix("file://")) / "year=2024" / "month=01"
+        partition = local(table) / JANUARY.partition
         assert len(list(partition.glob("*.parquet"))) == 1
 
 
@@ -83,11 +68,11 @@ def test_rerun_is_idempotent(
     put_bronze(JANUARY, january_sample(bronze))
 
     process_month(spark, JANUARY, paths, RUN_ID)
-    process_month(spark, JANUARY, paths, "20240402T000000Z")
+    process_month(spark, JANUARY, paths, RERUN_ID)
 
     rows = silver(spark, paths).collect()
     assert len(rows) == 2
-    assert {r["_run_id"] for r in rows} == {"20240402T000000Z"}
+    assert {r["_run_id"] for r in rows} == {RERUN_ID}
     assert spark.read.parquet(paths.quarantine_table()).count() == 2
 
 
@@ -103,7 +88,7 @@ def test_rerun_leaves_other_months_untouched(
     process_month(spark, JANUARY, paths, RUN_ID)
     process_month(spark, FEBRUARY, paths, RUN_ID)
 
-    process_month(spark, JANUARY, paths, "20240402T000000Z")
+    process_month(spark, JANUARY, paths, RERUN_ID)
 
     counts = {
         (r["month"]): r["count"] for r in silver(spark, paths).groupBy("month").count().collect()
@@ -130,11 +115,11 @@ def test_rerun_clears_stale_quarantine(
 
     # Korrigierte Quelldatei ohne fehlerhafte Zeilen: die alte Quarantäne darf nicht stehen bleiben.
     put_bronze(JANUARY, bronze({}))
-    entry = process_month(spark, JANUARY, paths, "20240402T000000Z")
+    entry = process_month(spark, JANUARY, paths, RERUN_ID)
 
     assert entry["rows_rejected"] == 0
-    quarantine_partition = Path(paths.quarantine_table().removeprefix("file://"))
-    assert not (quarantine_partition / "year=2024" / "month=01").exists()
+    quarantine_partition = local(paths.quarantine_table())
+    assert not (quarantine_partition / JANUARY.partition).exists()
 
 
 def test_missing_bronze_month(spark: SparkSession, paths: LakePaths) -> None:
@@ -150,7 +135,7 @@ def test_run_writes_report(
     report = run(spark, [JANUARY, FEBRUARY], paths, RUN_ID)
 
     assert report["counts"] == {"processed": 1, "missing": 1}
-    stored = json.loads(Path(paths.run_report(RUN_ID).removeprefix("file://")).read_text())
+    stored = json.loads(local(paths.silver_run_report(RUN_ID)).read_text())
     assert stored == report
 
 
@@ -186,7 +171,7 @@ def test_all_rows_rejected_marks_month_failed(
     process_month(spark, JANUARY, paths, RUN_ID)
 
     put_bronze(JANUARY, bronze({"fare_amount": -3.0}, {"PULocationID": 999}))
-    entry = process_month(spark, JANUARY, paths, "20240402T000000Z")
+    entry = process_month(spark, JANUARY, paths, RERUN_ID)
 
     assert entry["status"] == "failed"
     assert entry["rows_valid"] == 0
@@ -204,7 +189,7 @@ def test_empty_bronze_marks_month_failed(
 
     assert report["counts"] == {"failed": 1}
     assert report["months"][0]["rows_in"] == 0
-    assert not Path(paths.silver_table().removeprefix("file://")).exists()
+    assert not local(paths.silver_table()).exists()
 
 
 def test_failure_between_writes_discards_month(
@@ -225,12 +210,12 @@ def test_failure_between_writes_discards_month(
 
     monkeypatch.setattr(lake, "write_partition", fail_on_quarantine)
 
-    entry = process_month(spark, JANUARY, paths, "20240402T000000Z")
+    entry = process_month(spark, JANUARY, paths, RERUN_ID)
 
     assert entry["status"] == "failed"
     assert "Schreibfehler" in entry["error"]
     for table in (paths.silver_table(), paths.quarantine_table()):
-        assert not (Path(table.removeprefix("file://")) / "year=2024" / "month=01").exists()
+        assert not (local(table) / JANUARY.partition).exists()
 
 
 @pytest.mark.parametrize(

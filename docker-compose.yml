@@ -15,18 +15,23 @@ x-healthcheck: &default-healthcheck
   retries: 20
   start_period: 10s
 
-x-spark-job-env: &spark-job-env
+# Gemeinsame Umgebung von Ingestion und Spark-Jobs. Zugangsdaten setzt jeder Service selbst,
+# damit er nur seine eigene Identität kennt.
+x-pipeline-env: &pipeline-env
   S3_ENDPOINT: http://seaweedfs:8333
-  S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
-  S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
-  SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
   BRONZE_BUCKET: bronze
-  SILVER_BUCKET: silver
-  GOLD_BUCKET: gold
   TLC_DATASET: yellow_tripdata
   INGEST_PERIOD: ${INGEST_PERIOD:?siehe .env.example}
   PIPELINE_RUN_ID_FILE: /run/pipeline/run-id
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-spark-job-env: &spark-job-env
+  <<: *pipeline-env
+  S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?siehe .env.example}
+  S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?siehe .env.example}
+  SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+  SILVER_BUCKET: silver
+  GOLD_BUCKET: gold
 
 # Spark-Jobs als One-Shot-Container (Driver im Client-Modus). restart "no": Ein Fehler oder ein
 # unvollständiger Zeitraum (Exit-Code 3) hält die Kette an, statt den Job endlos zu wiederholen.
@@ -105,15 +110,10 @@ services:
     image: localhost/taxi-pipeline/ingestion:0.1.0
     # Nur die eigene Identität: Least Privilege, kein Zugriff auf silver/gold.
     environment:
-      S3_ENDPOINT: http://seaweedfs:8333
+      <<: *pipeline-env
       S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?siehe .env.example}
       S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?siehe .env.example}
-      BRONZE_BUCKET: bronze
       TLC_BASE_URL: ${TLC_BASE_URL:?siehe .env.example}
-      TLC_DATASET: yellow_tripdata
-      INGEST_PERIOD: ${INGEST_PERIOD:?siehe .env.example}
-      PIPELINE_RUN_ID_FILE: /run/pipeline/run-id
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - pipeline-run:/run/pipeline:ro
     depends_on:
