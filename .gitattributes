@@ -4,3 +4,4 @@
 *.png binary
 *.pdf binary
 *.parquet binary
+graphify-out/graph.json merge=graphify

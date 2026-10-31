@@ -1,7 +1,11 @@
 name: Tests
 
+# Pull Request: Unit-Tests und Lint, beim Release-PR nach main auch E2E. Merge nach develop: E2E.
+# Merge nach main: alles.
 on:
   pull_request:
+  push:
+    branches: [develop, main]
   workflow_dispatch:
 
 permissions:
@@ -12,12 +16,12 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  COMPOSE_CMD: docker compose
   UV_VERSION: "0.12.10" # wie in services/ingestion/Dockerfile
 
 jobs:
   unit-tests:
     name: unit-tests (${{ matrix.project }})
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -52,6 +56,7 @@ jobs:
   # sie sich lokal umgehen lassen. Ändert ein Hook eine Datei (z. B. ruff --fix), scheitert der
   # Lauf; --show-diff-on-failure zeigt die nötige Änderung im Log.
   lint:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -72,50 +77,44 @@ jobs:
       - run: uv sync --frozen
       - run: uv run pre-commit run --all-files --show-diff-on-failure
 
-  # End-to-End-Lauf über docker compose up mit den echten Images, SeaweedFS und dem Spark-Cluster.
-  # Ingestion lädt gekürzte echte TLC-Dateien (tests/e2e/fixtures) von einem Mock-Server statt von
-  # CloudFront. Prüft die Kette über ein Quartal, die Wiederholung (idempotent), einen einzelnen
-  # Monat, ein nicht veröffentlichtes Quartal (403 → Exit-Code 3), Zugriffsrechte und die Run-ID
-  # über alle Schichten. Podman deckt er nicht ab.
+  # End-to-End-Lauf über docker-compose.test.yml: dieselbe Pipeline mit den echten Images,
+  # SeaweedFS und dem Spark-Cluster, nur lädt die Ingestion gekürzte echte TLC-Dateien
+  # (tests/e2e/fixtures) von einem Mock-Server. Am Ende der Kette prüft der Container e2e-tests den
+  # Lake für 2024Q1; sein Exit-Code ist das Ergebnis. Danach läuft alles ein zweites Mal auf dem
+  # befüllten Lake (Idempotenz). Lokal läuft derselbe Befehl, Podman deckt CI nicht ab.
+  # Bei Pull Requests nur vor dem Release nach main: zwei Läufe mit Image-Builds dauern rund zehn
+  # Minuten.
   e2e:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: tests/e2e
+    timeout-minutes: 25
     env:
-      # Stack nach pytest stehen lassen, damit die Logs bei einem Fehler noch abrufbar sind.
-      E2E_KEEP: "1"
-      COMPOSE_FILE: ${{ github.workspace }}/docker-compose.yml:${{ github.workspace }}/tests/e2e/compose.e2e.yml
-      COMPOSE_ENV_FILES: ${{ github.workspace }}/.env,${{ github.workspace }}/tests/e2e/e2e.env
+      COMPOSE: docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example
     steps:
       - uses: actions/checkout@v5
 
-      - uses: astral-sh/setup-uv@v7
-        with:
-          version: ${{ env.UV_VERSION }}
-          enable-cache: true
-          cache-dependency-glob: tests/e2e/uv.lock
+      - run: $COMPOSE run --build --rm e2e-tests
 
-      - name: .env aus dem Beispiel
-        run: cp ../../.env.example ../../.env
+      # Zweiter Lauf auf dem befüllten Lake (down ohne --volumes behält ihn): Die Ingestion
+      # überspringt unveränderte Dateien, Silver und Gold ersetzen ihre Partitionen. Dieselben
+      # Prüfungen scheitern, wenn die Wiederholung Zeilen verdoppelt oder Dateien liegen lässt.
+      - name: Wiederholung
+        run: |
+          $COMPOSE down
+          $COMPOSE run --rm e2e-tests
 
-      - run: uv sync --frozen
-      # -s zeigt Build- und Job-Ausgaben sofort; bei einem Abbruch durch timeout-minutes gingen
-      # von pytest gepufferte Ausgaben sonst verloren.
-      - run: uv run pytest -v -s --durations=5
-
+      # run zeigt nur die Ausgabe von e2e-tests, nicht die der Pipeline-Schritte.
       - name: Logs
         if: failure() || cancelled()
-        run: $COMPOSE_CMD logs --no-color
+        run: $COMPOSE logs --no-color
 
       - name: Aufräumen
         if: always()
-        run: $COMPOSE_CMD down --volumes --remove-orphans
+        run: $COMPOSE down --volumes --remove-orphans
 
   # Einziger Pflicht-Check im Branch-Schutz: neue Services in der Matrix zählen automatisch mit,
-  # neue Jobs genügt es in needs einzutragen.
-  # always(), weil GitHub einen übersprungenen Pflicht-Check als bestanden wertet.
+  # neue Jobs genügt es in needs einzutragen. Je nach Ereignis übersprungene Jobs zählen als
+  # bestanden. always(), weil GitHub einen übersprungenen Pflicht-Check als bestanden wertet.
   tests-passed:
     needs: [unit-tests, lint, e2e]
     if: always()
@@ -126,4 +125,4 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
-          jq -e 'all(.[]; .result == "success")' <<< "$NEEDS" > /dev/null
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<< "$NEEDS" > /dev/null

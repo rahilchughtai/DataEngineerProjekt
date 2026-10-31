@@ -1,16 +1,14 @@
 """Lesender Zugriff auf den Data Lake des Testprojekts.
 
-Nichts ist hier fest eingetragen: Endpunkt, Buckets und Zugangsdaten stammen aus der aufgelösten
-Compose-Konfiguration, die Identitäten aus seaweedfs/s3.json.template. Tabellen werden an ihren
-Hive-Partitionen (…/year=YYYY/month=MM/…) erkannt, Reports an der Run-ID unter _runs/. Der
-Laufbericht von run-report liegt getrennt davon unter _runs/pipeline/ in Gold.
+Nichts ist hier fest eingetragen: Endpunkt, Buckets und Zugangsdaten setzt docker-compose.test.yml
+in der Umgebung des Containers, die Identitäten stammen aus seaweedfs/s3.json.template. Tabellen
+werden an ihren Hive-Partitionen (…/year=YYYY/month=MM/…) erkannt, Reports an der Run-ID unter
+_runs/. Der Laufbericht von run-report liegt getrennt davon unter _runs/pipeline/ in Gold.
 """
 
 import hashlib
-import io
 import json
-import posixpath
-from collections import Counter
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,11 +18,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from pyarrow import fs
 
-ROOT = Path(__file__).resolve().parents[2]
-FIXTURES = Path(__file__).resolve().parent / "fixtures" / "trip-data"
+# Fixtures und Template kopiert tests/e2e/Dockerfile neben die Tests.
+HERE = Path(__file__).resolve().parent
+FIXTURES = HERE / "fixtures" / "trip-data"
 IDENTITIES: list[dict[str, Any]] = json.loads(
-    (ROOT / "seaweedfs" / "s3.json.template").read_text(encoding="utf-8")
+    (HERE / "s3.json.template").read_text(encoding="utf-8")
 )["identities"]
 ADMIN = next(identity["name"] for identity in IDENTITIES if "Admin" in identity["actions"])
 PIPELINE_REPORTS = "_runs/pipeline/"
@@ -40,51 +40,32 @@ class Settings:
     # Schicht (bronze, silver, gold) → Bucket, wie ihn der schreibende Service konfiguriert bekommt.
     buckets: dict[str, str]
     tlc_base_url: str
+    period: str
+    runs_dir: Path
     credentials: dict[str, tuple[str, str]]
-    host_ports: list[int]
 
     @classmethod
-    def from_compose(cls, config: dict[str, Any]) -> "Settings":
-        services = config["services"]
-        lake = services["seaweedfs"]
-        (s3_port,) = lake["ports"]
-
+    def from_env(cls) -> "Settings":
         def secret(placeholder: str) -> str:
             # Platzhalter wie __S3_ADMIN_ACCESS_KEY__ ersetzt der Entrypoint durch diese Variable.
-            return lake["environment"][placeholder.strip("_")]
+            return os.environ[placeholder.strip("_")]
 
-        credentials = {}
-        for identity in IDENTITIES:
-            (credential,) = identity["credentials"]
-            credentials[identity["name"]] = (
-                secret(credential["accessKey"]),
-                secret(credential["secretKey"]),
-            )
+        credentials = {
+            identity["name"]: (secret(credential["accessKey"]), secret(credential["secretKey"]))
+            for identity in IDENTITIES
+            for credential in identity["credentials"]
+        }
         return cls(
-            endpoint=f"http://{s3_port['host_ip']}:{s3_port['published']}",
+            endpoint=os.environ["S3_ENDPOINT"],
             buckets={
-                "bronze": services["ingestion"]["environment"]["BRONZE_BUCKET"],
-                "silver": services["silver-job"]["environment"]["SILVER_BUCKET"],
-                "gold": services["gold-job"]["environment"]["GOLD_BUCKET"],
+                layer: os.environ[f"{layer.upper()}_BUCKET"]
+                for layer in ("bronze", "silver", "gold")
             },
-            tlc_base_url=services["ingestion"]["environment"]["TLC_BASE_URL"],
+            tlc_base_url=os.environ["TLC_BASE_URL"],
+            period=os.environ["INGEST_PERIOD"],
+            runs_dir=Path(os.environ["RUNS_DIR"]),
             credentials=credentials,
-            host_ports=[
-                int(port["published"])
-                for service in services.values()
-                for port in service.get("ports", [])
-            ],
         )
-
-
-@dataclass(frozen=True)
-class LakeState:
-    """Inhalt aller Schichten zu einem Zeitpunkt; spätere Läufe überschreiben die Partitionen."""
-
-    # Bucket → Tabelle (Pfad vor den Partitionen) → Zeilen mit Partitionsspalten als Strings.
-    tables: dict[str, dict[str, pa.Table]]
-    # Bucket → Partitionsverzeichnis → Zahl der Objekte darin.
-    files: dict[str, Counter[str]]
 
 
 class Lake:
@@ -98,6 +79,12 @@ class Lake:
             aws_secret_access_key=secret_key,
             region_name="us-east-1",
             config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 2}),
+        )
+        self.fs = fs.S3FileSystem(
+            access_key=access_key,
+            secret_key=secret_key,
+            endpoint_override=settings.endpoint,
+            region="us-east-1",
         )
 
     def keys(self, bucket: str, prefix: str = "") -> list[str]:
@@ -143,48 +130,6 @@ class Lake:
         return True
 
     def tables(self, bucket: str) -> dict[str, pa.Table]:
-        parts: dict[str, list[pa.Table]] = {}
-        for key in self.keys(bucket):
-            directory, file_name = posixpath.split(key)
-            segments = directory.split("/")
-            partitions = [s.split("=", 1) for s in segments if "=" in s]
-            if not file_name.endswith(".parquet") or not partitions:
-                continue
-            table = pq.read_table(io.BytesIO(self.read(bucket, key)))
-            for column, value in partitions:
-                table = table.append_column(column, pa.array([value] * table.num_rows))
-            table_name = "/".join(s for s in segments if "=" not in s)
-            parts.setdefault(table_name, []).append(table)
-        return {
-            name: pa.concat_tables(tables, promote_options="default")
-            for name, tables in parts.items()
-        }
-
-    def state(self) -> LakeState:
-        buckets = self.settings.buckets.values()
-        return LakeState(
-            tables={bucket: self.tables(bucket) for bucket in buckets},
-            files={
-                bucket: Counter(
-                    posixpath.dirname(k) for k in self.keys(bucket) if "=" in posixpath.dirname(k)
-                )
-                for bucket in buckets
-            },
-        )
-
-
-@dataclass(frozen=True)
-class Container:
-    state: str
-    exit_code: int
-
-
-@dataclass(frozen=True)
-class Run:
-    """Ergebnis eines compose up: Exit-Code, Container je Service und Stand des Lake danach."""
-
-    # Exit-Code von up, nach erfolgreichem up der von compose wait run-report.
-    exit_code: int
-    containers: dict[str, Container]
-    run_id: str
-    state: LakeState
+        """Tabelle (Pfad vor den Partitionen) → Zeilen, Partitionsspalten year und month als int."""
+        names = {key.split("/year=")[0] for key in self.keys(bucket) if "/year=" in key}
+        return {name: pq.read_table(f"{bucket}/{name}", filesystem=self.fs) for name in names}

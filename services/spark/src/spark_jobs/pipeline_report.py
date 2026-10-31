@@ -1,19 +1,22 @@
 """Letzter Schritt von docker compose up: Laufbericht über Ingestion, Job 1 und Job 2.
 
 Liest die Reports der drei Schritte unter der gemeinsamen Run-ID und schreibt sie zusammengefasst
-nach gold/_runs/pipeline/<run_id>.json. Die Startzeit steckt in der Run-ID, die run-init vor allen
-anderen Schritten erzeugt. Die Laufzeit umfasst deshalb auch Containerstarts und das Warten auf
-den Spark-Cluster, also die End-to-End-Latenz des Laufs.
+nach gold/_runs/pipeline/<run_id>.json, mit RUNS_DIR zusätzlich als Kopie auf den Host. Die
+Startzeit steckt in der Run-ID, die run-init vor allen anderen Schritten erzeugt. Die Laufzeit
+umfasst deshalb auch Containerstarts und das Warten auf den Spark-Cluster, also die
+End-to-End-Latenz des Laufs.
 """
 
 import json
 import logging
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from pyspark.sql import SparkSession
 
+from pipeline_common import env
 from pipeline_common.logs import setup_logging
 from pipeline_common.periods import parse_period, period_from_env
 from pipeline_common.run_id import read_run_id
@@ -59,7 +62,20 @@ def build_report(
     }
 
 
-def run(spark: SparkSession, paths: LakePaths, run_id: str, period: str) -> dict[str, Any]:
+def write_host_copy(runs_dir: str, report: dict[str, Any]) -> None:
+    """Kopie nach runs/ auf dem Host; maßgeblich bleibt der Lake, daher nur eine Warnung."""
+    if not runs_dir:
+        return
+    path = Path(runs_dir) / f"{report['run_id']}.json"
+    try:
+        path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    except OSError as err:
+        log.warning("Laufbericht nicht nach %s geschrieben: %s", path, err)
+
+
+def run(
+    spark: SparkSession, paths: LakePaths, run_id: str, period: str, runs_dir: str = ""
+) -> dict[str, Any]:
     reports = {}
     for step, path in step_reports(paths, run_id).items():
         if not lake.exists(spark, path):
@@ -70,6 +86,7 @@ def run(spark: SparkSession, paths: LakePaths, run_id: str, period: str) -> dict
     report = build_report(run_id, period, reports, finished_at)
     report_path = paths.pipeline_report(run_id)
     lake.write_text(spark, report_path, json.dumps(report, indent=2))
+    write_host_copy(runs_dir, report)
     log.info(
         "run=%s period=%s seconds=%.0f report=%s", run_id, period, report["seconds"], report_path
     )
@@ -83,13 +100,14 @@ def main() -> int:
         parse_period(period)
         paths = LakePaths.from_env()
         run_id = read_run_id()
+        runs_dir = env.optional("RUNS_DIR", "")
         spark = build_session("pipeline_report")
     except ValueError as err:
         log.error("%s", err)
         return 2
 
     try:
-        run(spark, paths, run_id, period)
+        run(spark, paths, run_id, period, runs_dir)
     except MissingReportError as err:
         log.error("%s", err)
         return 1

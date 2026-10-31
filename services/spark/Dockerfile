@@ -26,6 +26,8 @@ RUN pip install --no-cache-dir --no-deps /tmp/pipeline_common && rm -rf /tmp/pip
 COPY services/spark/conf/ /opt/spark/conf/
 COPY --chmod=755 services/spark/bin/ /usr/local/bin/
 COPY services/spark/src/spark_jobs /opt/spark-jobs/spark_jobs
+# Ziel der Host-Kopie des Laufberichts; ein leeres benanntes Volume übernimmt den Besitzer.
+RUN mkdir /runs && chown spark /runs
 
 # Das Basisimage läuft bereits als unprivilegierter Nutzer spark (uid 185).
 USER spark

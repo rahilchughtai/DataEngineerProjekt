@@ -76,7 +76,7 @@ Beim Lauf über 2024Q1 (9,42 Mio. Silver-Fahrten) brauchte Job 2 je Monat 6 bis 
 
 ## Laufbericht (`run-report`)
 
-[pipeline_report.py](src/spark_jobs/pipeline_report.py) ist der letzte Schritt von `docker compose up` und startet, wenn `gold-job` erfolgreich war. Er liest die Reports von Ingestion, Job 1 und Job 2 unter der Run-ID des Laufs und schreibt `s3a://gold/_runs/pipeline/<run_id>.json` mit Zeitraum, Monaten, Start- und Endzeit, Gesamtdauer und je Schritt Zählern und Laufzeit. Weil er nur kleine JSON-Dateien liest, läuft er mit `--master local[1]` im eigenen Container statt auf dem Cluster und hängt nur im Speichernetz. Fehlt ein Report, endet er mit Exit-Code `1`.
+[pipeline_report.py](src/spark_jobs/pipeline_report.py) ist der letzte Schritt von `docker compose up` und startet, wenn `gold-job` erfolgreich war. Er liest die Reports von Ingestion, Job 1 und Job 2 unter der Run-ID des Laufs und schreibt `s3a://gold/_runs/pipeline/<run_id>.json` mit Zeitraum, Monaten, Start- und Endzeit, Gesamtdauer und je Schritt Zählern und Laufzeit. Ist `RUNS_DIR` gesetzt (in Compose `/runs`, auf dem Host `runs/`), schreibt er dieselbe Datei zusätzlich dorthin; scheitert das, bleibt es bei einer Warnung. Weil er nur kleine JSON-Dateien liest, läuft er mit `--master local[1]` im eigenen Container statt auf dem Cluster und hängt nur im Speichernetz. Fehlt ein Report, endet er mit Exit-Code `1`.
 
 ## Aufruf
 

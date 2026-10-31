@@ -1,27 +1,41 @@
 # End-to-End-Test
 
-Startet die Pipeline wie im Normalbetrieb mit `docker compose up` über die echten Images, SeaweedFS und den Spark-Cluster. Der Test ergänzt nur zwei Dateien: [compose.e2e.yml](compose.e2e.yml) über `COMPOSE_FILE` fügt einen lokalen Mock-Server (`tlc-mock`) hinzu, der nur die Dateien unter [fixtures/trip-data/](fixtures/trip-data) ausliefert. [e2e.env](e2e.env) über `COMPOSE_ENV_FILES` legt sich über die `.env` im Repo-Root und setzt `TLC_BASE_URL` auf diesen Mock. Den Zeitraum je Lauf setzt der Test über `INGEST_PERIOD` in der Umgebung des Compose-Aufrufs.
+Der Test startet dieselbe Pipeline wie im Normalbetrieb, mit den echten Images, SeaweedFS und dem Spark-Cluster. [docker-compose.test.yml](../../docker-compose.test.yml) im Repo-Root legt sich als Override über `docker-compose.yml` und ändert nur, was ein Test braucht: Ein lokaler Mock-Server (`tlc-mock`) ersetzt CloudFront und liefert nur die Dateien unter [fixtures/trip-data/](fixtures/trip-data). `INGEST_PERIOD` steht fest auf `2024Q1`, der Spark-Cluster ist kleiner, und am Ende der Kette steht der Container `e2e-tests`. Laptop und CI führen denselben Befehl aus:
 
 ```sh
-cp .env.example .env                       # einmalig im Repo-Root
-COMPOSE_CMD="<compose>" uv run --directory tests/e2e pytest -v   # z. B. "docker compose" oder "podman compose"
+docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example run --build --rm e2e-tests
+docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example down -v
 ```
 
-Jeder Lauf ist `compose up --detach`, gefolgt von `compose wait run-report`. Abgekoppelt deshalb, weil SeaweedFS und der Spark-Cluster nach dem Lauf weiterlaufen und ein angehängtes `up` nicht von selbst endet. `up --detach` wartet die `depends_on`-Bedingungen ab und scheitert, sobald ein Schritt fehlschlägt. Danach liest der Test Zustand und Exit-Code jedes Containers aus `compose ps --all` und die Run-ID aus dem neuen Ingestion-Report. Für `up` und `wait` gilt je eine Frist von 600 Sekunden.
+Mit Podman lautet der Befehl `podman compose` statt `docker compose`. Auf dem Host braucht es nur die Container-Engine, kein Python. `--env-file .env.example` macht den Lauf unabhängig von der lokalen `.env`.
 
-Der Test läuft im eigenen Compose-Projekt `taxi-pipeline-e2e` mit eigenen Volumes und Netzen. Er löscht also nie den lokalen Data Lake. Die Host-Ports sind dieselben wie in der normalen Umgebung, die deshalb vorher gestoppt sein muss. Vor dem ersten Lauf entfernt der Test sein Projekt samt Volumes und baut die Images neu, danach räumt er wieder auf; mit `E2E_KEEP=1` bleibt der Stack zur Fehlersuche stehen. Der Override verkleinert den Spark-Cluster auf einen Worker mit 1 GiB und Executors mit 512 MiB, weil 2.000 Fahrten je Monat nicht mehr brauchen und lokale VMs oft nur 2 GiB RAM haben.
+`compose run` startet zuerst alle Abhängigkeiten von `e2e-tests` und wartet ihre `depends_on`-Bedingungen ab. `e2e-tests` hängt mit `service_completed_successfully` an `run-report` und startet deshalb nur, wenn Ingestion, beide Spark-Jobs und der Laufbericht erfolgreich waren. Danach führt der Container pytest gegen SeaweedFS aus, `run` zeigt dessen Ausgabe und gibt seinen Exit-Code weiter. Scheitert ein Schritt vorher, startet `e2e-tests` nicht und `run` endet ebenfalls mit einem Fehler; die Ausgabe der Pipeline zeigt dann `compose logs`. `up --exit-code-from` wie in vielen Anleitungen funktioniert hier nicht, weil es den Stack schon beim Ende des ersten One-Shots (`run-init`) abbricht.
 
-## Ablauf und Prüfungen
+Der Test läuft im eigenen Compose-Projekt `taxi-pipeline-test` mit eigenen Volumes und Netzen und ohne Host-Ports (`ports: !reset []`). Er berührt also nie den lokalen Data Lake und darf neben der normalen Umgebung laufen. `down -v` entfernt danach seine Volumes. Der Spark-Cluster schrumpft auf einen Worker mit 1 GiB und Executors mit 512 MiB, weil 2.000 Fahrten je Monat nicht mehr brauchen und lokale VMs oft nur 2 GiB RAM haben.
 
-Der Test legt nur seine Eingaben fest: das Quartal mit Fixtures (`2024Q1`), einen Monat daraus (`2024-03`) und ein Quartal ohne Fixtures (`2024Q2`). Alles andere liest er aus dem System selbst: Endpunkt, Buckets, Mock-URL und Zugangsdaten aus der aufgelösten Compose-Konfiguration, Identitäten und Rechte aus [seaweedfs/s3.json.template](../../seaweedfs/s3.json.template), Objekt-Keys aus den Reports. Tabellen erkennt er an ihren Partitionen `year=…/month=…`. Geprüft werden Invarianten statt fest eingetragener Zahlen.
+## Prüfungen
 
-| Lauf | Prüfungen |
+Der Test liest alles aus dem System selbst: Endpunkt, Buckets, Mock-URL und Zugangsdaten aus der Umgebung des Containers, Identitäten und Rechte aus [seaweedfs/s3.json.template](../../seaweedfs/s3.json.template) (ins Image kopiert), die Run-ID aus dem Volume von `run-init`, Objekt-Keys aus den Reports. Tabellen erkennt er an ihren Partitionen `year=…/month=…`. Geprüft werden Invarianten statt fest eingetragener Zahlen:
+
+| Test | Prüfung |
 |---|---|
-| Konfiguration | keine Profile; `ingestion` wartet auf `lake-init` und `run-init`, jeder weitere Schritt auf den vorigen mit `service_completed_successfully`; alle One-Shots mit `restart: "no"` |
-| `INGEST_PERIOD=2024Q1` | alle One-Shots `exited` mit `0`; Laufbericht mit Run-ID, Zeitraum und den Zählern und Laufzeiten der drei Service-Reports, Gesamtdauer mindestens deren Summe; Bronze byte-gleich mit den ausgelieferten Dateien (SHA-256, Größe, Quelle, ETag); Silver-Report summiert sich auf (`rows_in = valid + rejected + duplicates`, Duplikate wie in der Quelle, Quarantäne greift); Silver und Quarantäne passen zum Report, Pickups im Monat, Herkunft aus der Bronze-Datei; Gold ist ein dichtes Raster aus Zonen × Stunden des Monats, `sum(trip_count)` = Silver; dieselbe Run-ID in allen Reports und in `_run_id`; Zugriffsrechte jeder Identität wie im Template |
-| `INGEST_PERIOD=2024Q1`, Wiederholung | neue Run-ID; Ingestion überspringt alle Monate (ETag unverändert); alle Schichten ohne Lineage-Spalten inhaltlich gleich, keine zusätzlichen Dateien |
-| `INGEST_PERIOD=2024-03` | alle One-Shots erfolgreich; alle Reports und der Laufbericht enthalten nur `2024-03`; nur die März-Partitionen in Silver und Gold tragen die neue Run-ID, Januar und Februar die der Wiederholung; Inhalt und Dateien sonst unverändert |
-| `INGEST_PERIOD=2024Q2` | Mock antwortet mit 403 → Ingestion `not_published` mit Exit-Code 3, `up` scheitert, `silver-job`, `gold-job` und `run-report` starten nicht, der Lake bleibt unverändert |
+| Laufbericht | Run-ID, Zeitraum, Monate, Zähler und Laufzeiten der drei Service-Reports, Gesamtdauer mindestens deren Summe |
+| Bronze | byte-gleich mit den ausgelieferten Dateien (SHA-256, Größe, Quelle, ETag) |
+| Silver-Report | `rows_in = valid + rejected + duplicates`, Duplikate wie in der Quelle, Quarantäne greift |
+| Silver und Quarantäne | passen zum Report, Pickups im Monat, Herkunft aus der Bronze-Datei, Ablehnungsgründe wie im Report |
+| Gold | dichtes Raster aus Zonen × Stunden des Monats, `sum(trip_count)` = Silver |
+| Dateien | je Partition in allen Buckets genau eine Parquet-Datei, also keine Reste früherer Läufe |
+| Lineage | dieselbe Run-ID in allen Reports und in `_run_id` |
+| Zugriffsrechte | List, Read und Write jeder Identität auf jedem Bucket wie im Template |
+
+Der Test prüft einen Lauf; die Idempotenz entsteht durch einen zweiten Lauf auf dem befüllten Lake. `down` ohne `-v` entfernt die Container, behält aber die Volumes und damit den Lake, und `run-init` erzeugt eine neue Run-ID:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example down
+docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example run --rm e2e-tests
+```
+
+Dieselben Prüfungen müssen wieder bestehen. Hängt die Wiederholung Zeilen an, passen Zeilenzahl und Report nicht mehr zusammen; bleiben Dateien oder Run-IDs früherer Läufe stehen, scheitern der Dateien- und der Lineage-Test. Die Ingestion meldet unveränderte Dateien als `skipped`. CI führt beide Läufe nacheinander aus. Einzelmonat und nicht veröffentlichte Monate prüfen die Unit-Tests der Services: `test_rerun_*` in [services/spark/tests](../../services/spark/tests) (nur die eigene Monatspartition wird ersetzt), `test_ingest_month_reloads_only_changed_source` und `test_download_missing_file_is_not_retried` in [services/ingestion/tests](../../services/ingestion/tests).
 
 ## Fixtures
 

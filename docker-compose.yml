@@ -197,7 +197,8 @@ services:
         condition: service_healthy
 
   # Laufbericht über alle drei Schritte nach gold/_runs/pipeline/. Liest nur kleine JSON-Dateien,
-  # deshalb lokal im Container statt auf dem Cluster und nur im Speichernetz.
+  # deshalb lokal im Container statt auf dem Cluster und nur im Speichernetz. Eine Kopie landet in
+  # runs/ auf dem Host, damit Läufe ohne Lake-Zugang und nach down -v nachvollziehbar bleiben.
   run-report:
     <<: *spark-job
     entrypoint:
@@ -207,7 +208,12 @@ services:
       - --conf
       - spark.ui.enabled=false
       - /opt/spark-jobs/spark_jobs/pipeline_report.py
-    environment: *spark-job-env
+    environment:
+      <<: *spark-job-env
+      RUNS_DIR: /runs
+    volumes:
+      - pipeline-run:/run/pipeline:ro
+      - ./runs:/runs
     networks: [lakenet]
     depends_on:
       gold-job:
