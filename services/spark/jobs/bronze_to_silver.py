@@ -7,10 +7,21 @@ changes its schema over the years (e.g. passenger_count as double or int64).
 
 import logging
 
+from pyspark import StorageLevel
 from pyspark.sql import Column, DataFrame
 from pyspark.sql import functions as F
 
-from common import BRONZE, QUARANTINE, SILVER, month_path, period_months, start, write_month
+from common import (
+    BRONZE,
+    LAST_ZONE,
+    QUARANTINE,
+    SILVER,
+    month_bounds,
+    month_path,
+    period_months,
+    start,
+    write_month,
+)
 
 log = logging.getLogger("bronze_to_silver")
 
@@ -47,14 +58,9 @@ def out_of_range(name: str, low: float, high: float) -> Column:
     return column.isNull() | F.isnan(column) | (column < low) | (column > high)
 
 
-def first_instant(year: int, month: int) -> Column:
-    return F.lit(f"{year:04d}-{month:02d}-01 00:00:00").cast("timestamp_ntz")
-
-
 def reject_reason(year: int, month: int) -> Column:
     """Name of the first violated rule, or null for valid trips (order = priority)."""
-    start = first_instant(year, month)
-    end = first_instant(year + 1, 1) if month == 12 else first_instant(year, month + 1)
+    start, end = month_bounds(year, month)
     pickup, dropoff = F.col("pickup_datetime"), F.col("dropoff_datetime")
     duration = F.timestamp_diff("SECOND", pickup, dropoff)
     passengers = F.col("passenger_count")
@@ -69,9 +75,9 @@ def reject_reason(year: int, month: int) -> Column:
         # Negative amounts are cancellations or corrections, not trips.
         "amount_invalid": out_of_range("fare_amount", 0, 1e12)
         | out_of_range("total_amount", 0, 1e12),
-        # TLC zones have IDs 1 to 263; 264/265 stand for "unknown" / "outside NYC".
-        "location_invalid": out_of_range("pu_location_id", 1, 265)
-        | out_of_range("do_location_id", 1, 265),
+        # Demand is modelled per pickup zone; a dropoff outside the zones is still a trip.
+        "pickup_zone_unknown": out_of_range("pu_location_id", 1, LAST_ZONE),
+        "location_invalid": out_of_range("do_location_id", 1, 265),
         # passenger_count is often missing (entered at the meter) and may stay null.
         "passenger_count_invalid": (passengers < 0) | (passengers > 9),
     }
@@ -94,10 +100,12 @@ def main() -> None:
         raw = spark.read.parquet(month_path(BRONZE, year, month)).withColumn(
             "_source_file", F.col("_metadata.file_path")
         )
-        silver = to_silver(raw, year, month)
+        # Both writes reuse one computation instead of re-reading and deduplicating bronze.
+        silver = to_silver(raw, year, month).persist(StorageLevel.MEMORY_AND_DISK)
         rejected = F.col("reject_reason").isNotNull()
         write_month(silver.filter(~rejected).drop("reject_reason"), SILVER, year, month)
         write_month(silver.filter(rejected), QUARANTINE, year, month)
+        silver.unpersist()
         log.info("%04d-%02d: silver and quarantine written", year, month)
     spark.stop()
 
