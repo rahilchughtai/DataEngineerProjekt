@@ -43,7 +43,7 @@ def test_type_drift_is_cast_and_unconvertible_values_become_null(spark: SparkSes
     row = to_silver(raw, 2024, 1).first()
     assert row["passenger_count"] == 2
     assert row["pu_location_id"] is None
-    assert row["reject_reason"] == "location_invalid"
+    assert row["reject_reason"] == "pickup_zone_unknown"
 
 
 def test_exact_duplicates_are_removed(bronze: Callable[..., DataFrame]) -> None:
@@ -52,7 +52,12 @@ def test_exact_duplicates_are_removed(bronze: Callable[..., DataFrame]) -> None:
 
 @pytest.mark.parametrize(
     "override",
-    [{}, {"passenger_count": None}, {"fare_amount": 1e9, "total_amount": 1e9}],
+    [
+        {},
+        {"passenger_count": None},
+        {"fare_amount": 1e9, "total_amount": 1e9},
+        {"DOLocationID": 265},
+    ],
 )
 def test_valid_trips_pass(bronze: Callable[..., DataFrame], override: dict[str, Any]) -> None:
     assert reason(bronze, override) is None
@@ -73,7 +78,9 @@ def test_valid_trips_pass(bronze: Callable[..., DataFrame], override: dict[str, 
         ({"fare_amount": -5.0}, "amount_invalid"),
         ({"total_amount": None}, "amount_invalid"),
         ({"total_amount": float("inf")}, "amount_invalid"),
-        ({"PULocationID": 0}, "location_invalid"),
+        ({"PULocationID": 0}, "pickup_zone_unknown"),
+        ({"PULocationID": 264}, "pickup_zone_unknown"),
+        ({"PULocationID": 265}, "pickup_zone_unknown"),
         ({"DOLocationID": 266}, "location_invalid"),
         ({"passenger_count": 12}, "passenger_count_invalid"),
         # The first violated rule wins.

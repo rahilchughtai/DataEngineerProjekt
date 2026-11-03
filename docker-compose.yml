@@ -49,7 +49,31 @@ services:
       <<: *healthcheck
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
 
-  # Creates the buckets via the S3 API if missing. The only service with the admin identity.
+  # Web admin UI (cluster, volumes, file browser), started only on request:
+  #   docker compose --profile admin up -d seaweedfs-admin
+  # Login with the admin identity (S3_ADMIN_ACCESS_KEY / S3_ADMIN_SECRET_KEY).
+  seaweedfs-admin:
+    image: localhost/taxi-pipeline/seaweedfs:0.1.0
+    pull_policy: never
+    profiles: [admin]
+    entrypoint:
+      - weed
+      - admin
+      - -master=seaweedfs:9333
+      - -dataDir=/tmp
+      - -adminUser=${S3_ADMIN_ACCESS_KEY:?}
+      - -adminPassword=${S3_ADMIN_SECRET_KEY:?}
+    ports:
+      - "127.0.0.1:12535:12535"
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:12535/login"]
+
+  # Creates the buckets via the S3 API if missing. Admin identity, like seaweedfs-admin.
   lake-init:
     build:
       context: ./seaweedfs

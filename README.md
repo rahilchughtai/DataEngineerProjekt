@@ -41,14 +41,18 @@ nur diesen neu zu verarbeiten. Das Parsen des Zeitraums und das Format der Parti
 Ingestion und Spark über die kleine Bibliothek [libs/pipeline_common](libs/pipeline_common/src/pipeline_common), zusammen mit dem gemeinsamen Log-Format.
 
 **Silver** übernimmt nur die für Nachfrage-Features nötigen Spalten, castet sie auf feste Typen
-(die TLC ändert ihr Schema über die Jahre), entfernt exakte Duplikate und prüft neun
+(die TLC ändert ihr Schema über die Jahre), entfernt exakte Duplikate und prüft zehn
 Qualitätsregeln: fehlende Zeitstempel, Abholung außerhalb des Monats, negative oder über 24 Stunden
-lange Fahrten, ungültige Distanzen, Beträge, Zonen und Fahrgastzahlen. Abgelehnte Zeilen landen
-mit dem Namen der ersten verletzten Regel (`reject_reason`) in der Quarantäne. `_source_file` und
-`_processed_at` halten fest, woher und wann jede Zeile stammt.
+lange Fahrten, ungültige Distanzen und Beträge, Abholungen in den Zonen 264/265 („unbekannt“ und
+„außerhalb NYC“, für die sich keine Nachfrage je Zone bilden lässt), ungültige Zielzonen und
+Fahrgastzahlen. Abgelehnte Zeilen landen mit dem Namen der ersten verletzten Regel
+(`reject_reason`) in der Quarantäne. `_source_file` und `_processed_at` halten fest, woher und
+wann jede Zeile stammt.
 
-**Gold** enthält eine Zeile je Pickup-Zone und Stunde mit Fahrten: Anzahl (`trip_count`),
-mittlere Distanz, Dauer und Beträge sowie Stunde, Wochentag und Wochenende als Kalendermerkmale.
+**Gold** enthält eine Zeile je Pickup-Zone (1 bis 263) und Stunde des Monats: Anzahl
+(`trip_count`), mittlere Distanz, Dauer und Beträge sowie Stunde, Wochentag und Wochenende als
+Kalendermerkmale. Stunden ohne Fahrten stehen mit `trip_count = 0` und leeren Mittelwerten drin,
+damit das Modell auch fehlende Nachfrage sieht.
 
 **Der Laufbericht** zählt nach Gold je Monat die Zeilen in allen Schichten (`bronze_rows`,
 `silver_rows`, `quarantined_rows` mit `rejected_by_reason`, `duplicates`, `gold_rows`,
@@ -76,6 +80,27 @@ docker compose down                       # beenden; der Data Lake bleibt im Vol
 `--build` sorgt dafür, dass ein Lauf den aktuellen Code verwendet, weil die Image-Tags gleich
 bleiben. Nach dem Lauf laufen SeaweedFS (`http://127.0.0.1:8333`) und der Spark-Cluster (UI unter
 `http://127.0.0.1:8080`) weiter, damit die ML-Anwendung Gold lesen kann.
+
+Zum Ansehen des Data Lakes gibt es die Admin-Oberfläche von SeaweedFS (Cluster, Volumes,
+Dateibrowser über alle Buckets). Sie startet nur auf Anfrage und verlangt die Admin-Identität aus
+`.env` (`S3_ADMIN_ACCESS_KEY` als Benutzer, `S3_ADMIN_SECRET_KEY` als Passwort):
+
+```sh
+docker compose --profile admin up -d seaweedfs-admin   # danach http://127.0.0.1:12535
+docker compose --profile admin stop seaweedfs-admin
+```
+
+### Gold lesen (ML-Anwendung)
+
+[ml_reader/gold_analysis.ipynb](ml_reader/gold_analysis.ipynb) zeigt, wie die ML-Anwendung die
+Features mit der Identität `ml_reader` per pandas und pyarrow aus `gold/yellow_tripdata/zone_hourly/` liest,
+die Aktualität im Laufbericht prüft und eine einfache Analyse macht. Der letzte Schritt belegt,
+dass `ml_reader` Silver nicht lesen darf.
+
+```sh
+uv sync --directory ml_reader
+uv run --directory ml_reader --env-file ../.env jupyter nbconvert --execute --to notebook --inplace gold_analysis.ipynb
+```
 
 ## Umsetzung der Anforderungen
 
