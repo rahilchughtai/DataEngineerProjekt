@@ -10,6 +10,8 @@ from pipeline_common.periods import months, partition
 
 # Tables in the data lake (SeaweedFS S3); each is partitioned by year=YYYY/month=MM.
 BRONZE = "s3a://bronze/yellow_tripdata"
+# Checksum and source version per month, written by the ingestion.
+MANIFESTS = "s3a://bronze/_manifests/yellow_tripdata"
 SILVER = "s3a://silver/yellow_tripdata"
 QUARANTINE = "s3a://silver/_quarantine/yellow_tripdata"
 GOLD = "s3a://gold/yellow_tripdata/zone_hourly"
