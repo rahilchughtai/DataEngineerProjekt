@@ -1,0 +1,18 @@
+[project]
+name = "e2e"
+version = "0.1.0"
+description = "End-to-End-Test der Pipeline als Container in docker-compose.test.yml."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.40",
+    "pyarrow>=21",
+    "pytest>=8.4",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+# No cache: in the image /app is not owned by the test user.
+addopts = "-ra --strict-markers -p no:cacheprovider"

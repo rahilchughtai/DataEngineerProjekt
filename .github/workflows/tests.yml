@@ -1,0 +1,128 @@
+name: Tests
+
+# Pull request: unit tests and lint, plus E2E for the release PR to main. Merge to develop: E2E.
+# Merge to main: everything.
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  UV_VERSION: "0.12.10" # same as services/ingestion/Dockerfile
+
+jobs:
+  unit-tests:
+    name: unit-tests (${{ matrix.project }})
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every project (service or library) is its own uv project with its own tests/.
+        project: [services/ingestion, services/spark, libs/pipeline_common]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # PySpark needs a JVM; Spark 4 requires Java 17 (as in the Spark image).
+      - if: matrix.project == 'services/spark'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.project }}/uv.lock
+
+      # --frozen fails if uv.lock does not match pyproject.toml.
+      - run: uv sync --frozen
+      - run: uv run pytest
+
+  # All pre-commit hooks (incl. Ruff with the central config from pyproject.toml), because
+  # they can be skipped locally. If a hook changes a file (e.g. ruff --fix), the run fails;
+  # --show-diff-on-failure shows the required change in the log.
+  lint:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Hook environments, so pre-commit does not reinstall them on every run.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      - run: uv sync --frozen
+      - run: uv run pre-commit run --all-files --show-diff-on-failure
+
+  # End-to-end run via docker-compose.test.yml: the same pipeline with the real images,
+  # SeaweedFS and the Spark cluster, except that ingestion loads truncated real TLC files
+  # (tests/e2e/fixtures) from a mock server. At the end of the chain the e2e-tests container checks
+  # the lake for 2024Q1; its exit code is the result. Then everything runs a second time on the
+  # filled lake (idempotency). The same command runs locally; Podman is not covered by CI.
+  # On pull requests only before the release to main: two runs with image builds take about ten
+  # minutes.
+  e2e:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      COMPOSE: docker compose -f docker-compose.yml -f docker-compose.test.yml --env-file .env.example
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: $COMPOSE run --build --rm e2e-tests
+
+      # Second run on the filled lake (down without --volumes keeps it): ingestion skips
+      # unchanged files, silver and gold replace their partitions. The same checks fail if the
+      # rerun duplicates rows or leaves files behind.
+      - name: Wiederholung
+        run: |
+          $COMPOSE down
+          $COMPOSE run --rm e2e-tests
+
+      # run only shows the output of e2e-tests, not that of the pipeline steps.
+      - name: Logs
+        if: failure() || cancelled()
+        run: $COMPOSE logs --no-color
+
+      - name: Aufräumen
+        if: always()
+        run: $COMPOSE down --volumes --remove-orphans
+
+  # Only required check in branch protection: new services in the matrix count automatically,
+  # new jobs just need to be added to needs. Jobs skipped for the event count as passed.
+  # always(), because GitHub treats a skipped required check as passed.
+  tests-passed:
+    needs: [unit-tests, lint, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alle Jobs aus needs erfolgreich
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<< "$NEEDS" > /dev/null

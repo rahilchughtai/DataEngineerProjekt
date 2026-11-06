@@ -1,0 +1,35 @@
+[project]
+name = "spark-jobs"
+version = "0.1.0"
+description = "Spark-Jobs der Taxi-Pipeline: Bronze → Silver → Gold und Laufbericht."
+# Python version of the Spark image (apache/spark:4.1.3, Ubuntu 22.04). Driver and executors
+# run there, so the code must stay 3.10-compatible.
+requires-python = ">=3.10,<3.11"
+dependencies = ["pipeline-common"]
+
+[dependency-groups]
+# The Spark image ships PySpark (under /opt/spark/python), so this is only for the tests.
+dev = [
+    "pyspark==4.1.3", # exactly the image's version
+    "pytest>=8.4",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+pipeline-common = { path = "../../libs/pipeline_common" }
+
+[tool.pytest.ini_options]
+pythonpath = ["jobs"]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+# Inherits the central config; only the language level follows the Spark image.
+[tool.ruff]
+extend = "../../pyproject.toml"
+target-version = "py310"
+
+[tool.ruff.lint]
+# `from pyspark.sql import functions as F` is the usual PySpark convention.
+extend-ignore = ["N812"]

@@ -1,0 +1,172 @@
+# docker compose up performs a complete run for INGEST_PERIOD (.env):
+#
+#   seaweedfs → lake-init → ingestion → silver-job → gold-job → report
+#
+# Each step starts only after the previous one finished successfully; a failure stops the chain.
+# SeaweedFS (data lake) and the Spark cluster keep running afterwards.
+name: taxi-pipeline
+
+x-healthcheck: &healthcheck
+  interval: 5s
+  timeout: 3s
+  retries: 20
+  start_period: 10s
+
+# The Spark jobs: one container per step that submits the job to the cluster and then exits.
+# Spark identity only: reads bronze, writes silver and gold.
+x-spark-job: &spark-job
+  image: localhost/taxi-pipeline/spark:0.1.0
+  pull_policy: never
+  environment:
+    INGEST_PERIOD: ${INGEST_PERIOD:?}
+    S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?}
+    S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?}
+    # Memory per executor; must stay below SPARK_WORKER_MEMORY, otherwise the job waits forever.
+    SPARK_EXECUTOR_MEMORY: ${SPARK_EXECUTOR_MEMORY:-1g}
+  restart: "no"
+
+services:
+  # Data lake: S3-compatible object storage with the buckets bronze, silver and gold.
+  seaweedfs:
+    build: ./seaweedfs
+    image: localhost/taxi-pipeline/seaweedfs:0.1.0
+    environment:
+      WEED_JWT_FILER_SIGNING_KEY: ${SEAWEEDFS_SIGNING_KEY:?}
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?}
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?}
+      S3_SPARK_ACCESS_KEY: ${S3_SPARK_ACCESS_KEY:?}
+      S3_SPARK_SECRET_KEY: ${S3_SPARK_SECRET_KEY:?}
+      S3_ML_ACCESS_KEY: ${S3_ML_ACCESS_KEY:?}
+      S3_ML_SECRET_KEY: ${S3_ML_SECRET_KEY:?}
+    volumes:
+      - seaweedfs-data:/data
+    ports:
+      - "127.0.0.1:8333:8333"
+    restart: unless-stopped
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8333/healthz"]
+
+  # Web admin UI (cluster, volumes, file browser), started only on request:
+  #   docker compose --profile admin up -d seaweedfs-admin
+  # Login with the admin identity (S3_ADMIN_ACCESS_KEY / S3_ADMIN_SECRET_KEY).
+  seaweedfs-admin:
+    image: localhost/taxi-pipeline/seaweedfs:0.1.0
+    pull_policy: never
+    profiles: [admin]
+    entrypoint:
+      - weed
+      - admin
+      - -master=seaweedfs:9333
+      - -dataDir=/tmp
+      - -adminUser=${S3_ADMIN_ACCESS_KEY:?}
+      - -adminPassword=${S3_ADMIN_SECRET_KEY:?}
+    ports:
+      - "127.0.0.1:12535:12535"
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:12535/login"]
+
+  # Creates the buckets via the S3 API if missing. Admin identity, like seaweedfs-admin.
+  lake-init:
+    build:
+      context: ./seaweedfs
+      dockerfile: Dockerfile.init
+    image: localhost/taxi-pipeline/lake-init:0.1.0
+    environment:
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_ADMIN_ACCESS_KEY: ${S3_ADMIN_ACCESS_KEY:?}
+      S3_ADMIN_SECRET_KEY: ${S3_ADMIN_SECRET_KEY:?}
+      LAKE_BUCKETS: bronze silver gold
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: "no"
+
+  # Step 1: TLC monthly files → bronze. Ingestion identity only (writes bronze only).
+  ingestion:
+    build:
+      context: .
+      dockerfile: services/ingestion/Dockerfile
+    image: localhost/taxi-pipeline/ingestion:0.1.0
+    environment:
+      INGEST_PERIOD: ${INGEST_PERIOD:?}
+      TLC_BASE_URL: ${TLC_BASE_URL:?}
+      S3_ENDPOINT: http://seaweedfs:8333
+      S3_INGESTION_ACCESS_KEY: ${S3_INGESTION_ACCESS_KEY:?}
+      S3_INGESTION_SECRET_KEY: ${S3_INGESTION_SECRET_KEY:?}
+    depends_on:
+      lake-init:
+        condition: service_completed_successfully
+    restart: "no"
+
+  spark-master:
+    build:
+      context: .
+      dockerfile: services/spark/Dockerfile
+    image: localhost/taxi-pipeline/spark:0.1.0
+    command: ["spark-class", "org.apache.spark.deploy.master.Master", "--host", "spark-master"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080"]
+
+  # Compute nodes without S3 credentials: the executors receive them via the job.
+  # Horizontally scalable: docker compose up --scale spark-worker=N
+  spark-worker:
+    image: localhost/taxi-pipeline/spark:0.1.0
+    pull_policy: never
+    command: ["spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
+    environment:
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-2}
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-2g}
+    deploy:
+      replicas: 2
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8081"]
+
+  # Step 2: bronze → silver (quality rules, quarantine).
+  silver-job:
+    <<: *spark-job
+    command: [spark-submit, --master=spark://spark-master:7077, --conf=spark.driver.host=silver-job, /opt/jobs/bronze_to_silver.py]
+    depends_on:
+      ingestion:
+        condition: service_completed_successfully
+      spark-worker:
+        condition: service_healthy
+
+  # Step 3: silver → gold (hourly demand per zone).
+  gold-job:
+    <<: *spark-job
+    command: [spark-submit, --master=spark://spark-master:7077, --conf=spark.driver.host=gold-job, /opt/jobs/silver_to_gold.py]
+    depends_on:
+      silver-job:
+        condition: service_completed_successfully
+
+  # Step 4: run report to gold/_reports/<INGEST_PERIOD>/ and ./runs/<INGEST_PERIOD>/report.json.
+  report:
+    <<: *spark-job
+    command: [spark-submit, --master=spark://spark-master:7077, --conf=spark.driver.host=report, /opt/jobs/report.py]
+    # root only so the driver may write to the bind mount owned by the host user.
+    user: root
+    volumes:
+      - ./runs:/opt/runs
+    depends_on:
+      gold-job:
+        condition: service_completed_successfully
+
+volumes:
+  seaweedfs-data:
