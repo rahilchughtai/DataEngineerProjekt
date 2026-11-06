@@ -156,10 +156,14 @@ services:
       silver-job:
         condition: service_completed_successfully
 
-  # Step 4: run report to gold/_reports/<INGEST_PERIOD>/.
+  # Step 4: run report to gold/_reports/<INGEST_PERIOD>/ and ./runs/<INGEST_PERIOD>/report.json.
   report:
     <<: *spark-job
     command: [spark-submit, --master=spark://spark-master:7077, --conf=spark.driver.host=report, /opt/jobs/report.py]
+    # root only so the driver may write to the bind mount owned by the host user.
+    user: root
+    volumes:
+      - ./runs:/opt/runs
     depends_on:
       gold-job:
         condition: service_completed_successfully

@@ -4,6 +4,8 @@ It checks invariants instead of hard-coded numbers. In CI the test runs twice on
 lake; the same checks then show that a rerun duplicates nothing.
 """
 
+import hashlib
+import json
 import posixpath
 from collections import Counter
 from typing import Any
@@ -33,6 +35,20 @@ def test_bronze_stores_source_files_unchanged(s3: Any) -> None:
         assert s3.get_object(Bucket="bronze", Key=key)["Body"].read() == path.read_bytes(), key
 
 
+def test_manifest_and_report_carry_source_checksum(
+    s3: Any, report: dict[str, dict[str, Any]]
+) -> None:
+    for month, row in report.items():
+        year, number = month.split("-")
+        key = f"_manifests/yellow_tripdata/year={year}/month={number}/manifest.json"
+        manifest = json.loads(s3.get_object(Bucket="bronze", Key=key)["Body"].read())
+        source = fixture_file(month).read_bytes()
+        assert manifest["sha256"] == hashlib.sha256(source).hexdigest(), month
+        assert manifest["size_bytes"] == len(source), month
+        assert manifest["etag"] and manifest["last_modified"], month
+        assert row["source_sha256"] == manifest["sha256"], month
+
+
 def test_report_adds_up(report: dict[str, dict[str, Any]]) -> None:
     assert sorted(report) == ["2024-01", "2024-02", "2024-03"]
     for month, row in report.items():
@@ -46,6 +62,7 @@ def test_report_adds_up(report: dict[str, dict[str, Any]]) -> None:
         # Each stage builds on the previous one (ISO timestamps in UTC sort as text).
         stages = [row["bronze_loaded_at"], row["silver_processed_at"], row["gold_processed_at"]]
         assert stages == sorted(stages), month
+        assert row["bronze_to_silver_s"] >= 0 and row["silver_to_gold_s"] >= 0, month
 
 
 def test_silver_pickups_lie_in_their_month(
